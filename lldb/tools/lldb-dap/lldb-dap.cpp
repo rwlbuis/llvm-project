@@ -30,7 +30,9 @@
 #include "llvm/Option/OptTable.h"
 #include "llvm/Option/Option.h"
 #include "llvm/Support/Base64.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Errno.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/Path.h"
@@ -5140,6 +5142,12 @@ EXAMPLES:
   llvm::outs() << examples;
 }
 
+static void PrintVersion() {
+  llvm::outs() << "lldb-dap: ";
+  llvm::cl::PrintVersionMessage();
+  llvm::outs() << "liblldb: " << lldb::SBDebugger::GetVersionString() << '\n';
+}
+
 // If --launch-target is provided, this instance of lldb-dap becomes a
 // runInTerminal launcher. It will ultimately launch the program specified in
 // the --launch-target argument, which is the original program the user wanted
@@ -5243,6 +5251,11 @@ int main(int argc, char *argv[]) {
 
   if (input_args.hasArg(OPT_help)) {
     printHelp(T, llvm::sys::path::filename(argv[0]));
+    return EXIT_SUCCESS;
+  }
+
+  if (input_args.hasArg(OPT_version)) {
+    PrintVersion();
     return EXIT_SUCCESS;
   }
 
