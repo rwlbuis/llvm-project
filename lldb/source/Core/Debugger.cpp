@@ -498,6 +498,13 @@ bool Debugger::SetSeparator(llvm::StringRef s) {
   return ret;
 }
 
+bool Debugger::SetStatuslineFormat(const FormatEntity::Entry &format) {
+  constexpr uint32_t idx = ePropertyStatuslineFormat;
+  bool ret = SetPropertyAtIndex(idx, format);
+  RedrawStatusline();
+  return ret;
+}
+
 bool Debugger::GetUseAutosuggestion() const {
   const uint32_t idx = ePropertyShowAutosuggestion;
   return GetPropertyAtIndexAs<bool>(
