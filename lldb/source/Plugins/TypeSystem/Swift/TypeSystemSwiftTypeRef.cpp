@@ -1445,11 +1445,6 @@ TypeSystemSwiftTypeRef::GetSwiftName(const clang::Decl *clang_decl,
   return {};
 }
 
-CompilerType TypeSystemSwiftTypeRef::GetBuiltinRawPointerType() {
-  return GetTypeFromMangledTypename(ConstString("$sBpD"));
-}
-
-
 static bool IsImportedType(swift::Demangle::NodePointer node) {
   if (!node)
     return false;
