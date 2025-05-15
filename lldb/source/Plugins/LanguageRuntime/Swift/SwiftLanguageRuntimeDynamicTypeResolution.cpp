@@ -547,7 +547,6 @@ SwiftLanguageRuntime::GetMemberVariableOffsetRemoteMirrors(
 std::optional<uint64_t> SwiftLanguageRuntime::GetMemberVariableOffset(
     CompilerType instance_type, ValueObject *instance,
     llvm::StringRef member_name, Status *error) {
-  LLDB_SCOPED_TIMER();
   std::optional<uint64_t> offset;
 
   if (!instance_type.IsValid())
@@ -1581,7 +1580,6 @@ SwiftLanguageRuntime::GetNumFields(CompilerType type,
 llvm::Expected<uint32_t> SwiftLanguageRuntime::GetNumChildren(
     CompilerType type, ExecutionContextScope *exe_scope,
     bool include_superclass, bool include_clang_types) {
-  LLDB_SCOPED_TIMER();
   SwiftRuntimeTypeVisitor visitor(*this, type, exe_scope, !include_superclass,
                                   include_clang_types);
   return visitor.CountChildren();
@@ -1620,7 +1618,6 @@ std::pair<SwiftLanguageRuntime::LookupResult, std::optional<size_t>>
 SwiftLanguageRuntime::GetIndexOfChildMemberWithName(
     CompilerType type, llvm::StringRef name, ExecutionContext *exe_ctx,
     bool omit_empty_base_classes, std::vector<uint32_t> &child_indexes) {
-  LLDB_SCOPED_TIMER();
   SwiftRuntimeTypeVisitor visitor(*this, type, exe_ctx, false, false, true);
   bool found = false;
   unsigned i = 0, last_depth = 0;
@@ -2547,7 +2544,6 @@ void SwiftLanguageRuntime::ForEachGenericParameter(
 CompilerType SwiftLanguageRuntime::BindGenericTypeParameters(
     CompilerType unbound_type,
     std::function<CompilerType(unsigned, unsigned)> type_resolver) {
-  LLDB_SCOPED_TIMER();
   using namespace swift::Demangle;
 
   auto ts =
@@ -2633,7 +2629,6 @@ llvm::Expected<CompilerType>
 SwiftLanguageRuntime::BindGenericTypeParameters(StackFrame &stack_frame,
                                                 TypeSystemSwiftTypeRef &ts,
                                                 ConstString mangled_name) {
-  LLDB_SCOPED_TIMER();
   using namespace swift::Demangle;
 
   ThreadSafeReflectionContext reflection_ctx = GetReflectionContext();
@@ -3161,7 +3156,6 @@ bool SwiftLanguageRuntime::GetDynamicTypeAndAddress(
   if (use_dynamic == lldb::eNoDynamicValues)
     return false;
 
-  LLDB_SCOPED_TIMER();
   CompilerType val_type(in_value.GetCompilerType());
   Value::ValueType static_value_type = Value::ValueType::Invalid;
 

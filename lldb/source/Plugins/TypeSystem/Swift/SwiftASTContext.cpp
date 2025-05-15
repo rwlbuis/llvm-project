@@ -2589,7 +2589,6 @@ SwiftASTContext::CreateInstance(lldb::LanguageType language, Module &module,
   }
 
   {
-    LLDB_SCOPED_TIMERF("%s (getStdlibModule)", m_description.c_str());
     const bool can_create = true;
 
     // Report progress on module importing by using a callback function in
@@ -2700,8 +2699,6 @@ lldb::TypeSystemSP
 SwiftASTContext::CreateInstance(const SymbolContext &sc,
                                 TypeSystemSwiftTypeRef &typeref_typesystem,
                                 const char *extra_options) {
-  LLDB_SCOPED_TIMER();
-
   bool is_repl = extra_options;
   bool for_expressions =
       llvm::isa<TypeSystemSwiftTypeRefForExpressions>(&typeref_typesystem);
@@ -2730,6 +2727,8 @@ SwiftASTContext::CreateInstance(const SymbolContext &sc,
     ss << '"' << ')';
     m_description = ss.GetString();
   }
+
+  LLDB_SCOPED_TIMERF("%s::CreateInstance", m_description.c_str());
 
   if (is_repl)
     LOG_PRINTF(GetLog(LLDBLog::Types), "REPL detected");
@@ -3162,8 +3161,6 @@ SwiftASTContext::CreateInstance(const SymbolContext &sc,
   }
 
   {
-    LLDB_SCOPED_TIMERF("%s (getStdlibModule)", m_description.c_str());
-
     // Report progress on module importing by using a callback function in
     // swift::ASTContext
     Progress progress("Importing Swift standard library");
@@ -3514,7 +3511,6 @@ swift::SearchPathOptions &SwiftASTContext::GetSearchPathOptions() {
 void SwiftASTContext::InitializeSearchPathOptions(
     llvm::ArrayRef<std::pair<std::string, bool>> extra_module_search_paths,
     llvm::ArrayRef<std::pair<std::string, bool>> extra_framework_search_paths) {
-  LLDB_SCOPED_TIMER();
   swift::CompilerInvocation &invocation = GetCompilerInvocation();
 
   assert(!m_initialized_search_path_options);
@@ -3637,7 +3633,6 @@ ThreadSafeASTContext SwiftASTContext::GetASTContext() {
   if (m_ast_context_ap.get())
     return {m_ast_context_ap.get(), m_ast_context_mutex};
 
-  LLDB_SCOPED_TIMER();
   m_ast_context_ap.reset(swift::ASTContext::get(
       GetLanguageOptions(), GetTypeCheckerOptions(), GetSILOptions(),
       GetSearchPathOptions(), GetClangImporterOptions(),
@@ -3925,7 +3920,6 @@ SwiftASTContext::GetModule(const SourceModule &module, bool *cached) {
     return *module_decl;
   }
 
-  LLDB_SCOPED_TIMER();
   ThreadSafeASTContext ast = GetASTContext();
   if (!ast) {
     LOG_PRINTF(GetLog(LLDBLog::Types), "(\"%s\") invalid ASTContext",
@@ -4138,7 +4132,6 @@ GetLibrarySearchPaths(const swift::SearchPathOptions &search_path_opts) {
 void SwiftASTContext::LoadModule(swift::ModuleDecl *swift_module,
                                  Process &process, Status &error) {
   VALID_OR_RETURN();
-  LLDB_SCOPED_TIMER();
 
   Status current_error;
   auto addLinkLibrary = [&](swift::LinkLibrary link_lib) {
@@ -4337,7 +4330,6 @@ bool SwiftASTContext::LoadLibraryUsingPaths(
     std::vector<std::string> &search_paths, bool check_rpath,
     StreamString &all_dlopen_errors) {
   VALID_OR_RETURN(false);
-  LLDB_SCOPED_TIMER();
 
   SwiftLanguageRuntime *runtime = SwiftLanguageRuntime::Get(&process);
   if (!runtime) {
@@ -4484,7 +4476,6 @@ static std::string GetBriefModuleName(Module &module) {
 void SwiftASTContext::RegisterSectionModules(
     Module &module, std::vector<std::string> &module_names) {
   VALID_OR_RETURN();
-  LLDB_SCOPED_TIMER();
 
   swift::MemoryBufferSerializedModuleLoader *loader =
       GetMemoryBufferModuleLoader();
@@ -4556,7 +4547,6 @@ void SwiftASTContext::RegisterSectionModules(
 void SwiftASTContext::ImportSectionModules(
     Module &module, const std::vector<std::string> &module_names) {
   VALID_OR_RETURN();
-  LLDB_SCOPED_TIMER();
 
   Progress progress("Loading Swift module dependencies",
                     module.GetFileSpec().GetFilename().GetString(),
@@ -4585,7 +4575,6 @@ swift::Identifier SwiftASTContext::GetIdentifier(const llvm::StringRef &name) {
 
 ConstString SwiftASTContext::GetMangledTypeName(swift::TypeBase *type_base) {
   VALID_OR_RETURN(ConstString());
-  LLDB_SCOPED_TIMER();
 
   auto iter = m_type_to_mangled_name_map.find(type_base),
        end = m_type_to_mangled_name_map.end();
@@ -4657,7 +4646,6 @@ SwiftASTContext::GetTypeFromMangledTypename(ConstString mangled_typename) {
 }
 
 CompilerType SwiftASTContext::GetAsClangType(ConstString mangled_name) {
-  LLDB_SCOPED_TIMER();
   if (!swift::Demangle::isObjCSymbol(mangled_name.GetStringRef()))
     return {};
 
@@ -4765,7 +4753,6 @@ SwiftASTContext::ReconstructType(ConstString mangled_typename) {
   LOG_PRINTF(GetLog(LLDBLog::Types), "(\"%s\") -- not cached, searching",
              mangled_cstr);
 
-  LLDB_SCOPED_TIMERF("%s (not cached)", LLVM_PRETTY_FUNCTION);
   found_type = swift::Demangle::getTypeForMangling(
                    **ast_ctx, mangled_typename.GetStringRef())
                    .getPointer();
@@ -4946,7 +4933,6 @@ SwiftASTContext::FindContainedTypeOrDecl(llvm::StringRef name,
                                          TypeOrDecl container_type_or_decl,
                                          TypesOrDecls &results, bool append) {
   VALID_OR_RETURN(0);
-  LLDB_SCOPED_TIMER();
 
   if (!append)
     results.clear();
@@ -5042,7 +5028,6 @@ size_t SwiftASTContext::FindTypesOrDecls(const char *name,
                                          swift::ModuleDecl *swift_module,
                                          TypesOrDecls &results, bool append) {
   VALID_OR_RETURN(0);
-  LLDB_SCOPED_TIMER();
 
   if (!append)
     results.clear();
@@ -5081,7 +5066,6 @@ size_t SwiftASTContext::FindTypesOrDecls(const char *name,
 size_t SwiftASTContext::FindType(const char *name,
                                  std::set<CompilerType> &results, bool append) {
   VALID_OR_RETURN(0);
-  LLDB_SCOPED_TIMER();
 
   if (!append)
     results.clear();
@@ -5109,7 +5093,6 @@ size_t SwiftASTContext::FindType(const char *name,
 
 CompilerType SwiftASTContext::ImportType(CompilerType &type, Status &error) {
   VALID_OR_RETURN(CompilerType());
-  LLDB_SCOPED_TIMER();
 
   if (m_ast_context_ap.get() == NULL)
     return CompilerType();
@@ -5220,7 +5203,6 @@ SwiftASTContext::GetIRGenerator(swift::IRGenOptions &opts,
 
 swift::irgen::IRGenModule &SwiftASTContext::GetIRGenModule() {
   VALID_OR_RETURN(*m_ir_gen_module_ap);
-  LLDB_SCOPED_TIMER();
 
   llvm::call_once(m_ir_gen_module_once, [this]() {
     // Make sure we have a good ClangImporter.
@@ -5396,7 +5378,6 @@ void SwiftASTContext::PrintDiagnostics(DiagnosticManager &diagnostic_manager,
                                        uint32_t bufferID, uint32_t first_line,
                                        uint32_t last_line) const {
   // VALID_OR_RETURN cannot be used here here since would exit on error.
-  LLDB_SCOPED_TIMER();
   if (!m_ast_context_ap.get()) {
     RaiseFatalError("Swift compiler could not be initialized");
     return;
@@ -5784,7 +5765,6 @@ bool SwiftASTContext::IsPossibleDynamicType(opaque_compiler_type_t type,
                                             bool check_cplusplus,
                                             bool check_objc) {
   VALID_OR_RETURN_CHECK_TYPE(type, false);
-  LLDB_SCOPED_TIMER();
 
   auto can_type = GetCanonicalSwiftType(type);
   if (!can_type)
@@ -5905,7 +5885,6 @@ SwiftASTContext::GetStaticSelfType(lldb::opaque_compiler_type_t type) {
 
 bool SwiftASTContext::GetProtocolTypeInfo(const CompilerType &type,
                                           ProtocolInfo &protocol_info) {
-  LLDB_SCOPED_TIMER();
   if (swift::CanType swift_can_type = GetCanonicalSwiftType(type)) {
     if (!swift_can_type.isExistentialType())
       return false;
@@ -5977,7 +5956,6 @@ ConstString SwiftASTContext::GetTypeName(opaque_compiler_type_t type,
                                          bool BaseOnly) {
   VALID_OR_RETURN_CHECK_TYPE(
       type, ConstString("<invalid Swift context or opaque type>"));
-  LLDB_SCOPED_TIMER();
   std::string type_name;
   swift::Type swift_type(GetSwiftType(type));
 
@@ -6002,7 +5980,6 @@ static llvm::DenseMap<swift::CanType, swift::Identifier>
 GetArchetypeNames(swift::Type swift_type, swift::ASTContext &ast_ctx,
                   const SymbolContext *sc,
                   swift::Mangle::ManglingFlavor flavor) {
-  LLDB_SCOPED_TIMER();
   llvm::DenseMap<swift::CanType, swift::Identifier> dict;
 
   assert(&swift_type->getASTContext() == &ast_ctx);
@@ -6031,7 +6008,6 @@ ConstString SwiftASTContext::GetDisplayTypeName(opaque_compiler_type_t type,
                                                 const SymbolContext *sc) {
   VALID_OR_RETURN_CHECK_TYPE(
       type, ConstString("<invalid Swift context or opaque type>"));
-  LLDB_SCOPED_TIMER();
   std::string type_name(GetTypeName(type, false).AsCString(""));
   if (type) {
     swift::Type swift_type(GetSwiftType(type));
@@ -6052,7 +6028,6 @@ uint32_t
 SwiftASTContext::GetTypeInfo(opaque_compiler_type_t type,
                              CompilerType *pointee_or_element_clang_type) {
   VALID_OR_RETURN_CHECK_TYPE(type, 0);
-  LLDB_SCOPED_TIMER();
 
   if (pointee_or_element_clang_type)
     pointee_or_element_clang_type->Clear();
@@ -6440,7 +6415,6 @@ TypeMemberFunctionImpl
 SwiftASTContext::GetMemberFunctionAtIndex(opaque_compiler_type_t type,
                                           size_t idx) {
   VALID_OR_RETURN_CHECK_TYPE(type, TypeMemberFunctionImpl());
-  LLDB_SCOPED_TIMER();
 
   std::string name("");
   CompilerType result_type;
@@ -6593,7 +6567,6 @@ llvm::Expected<uint64_t>
 SwiftASTContext::GetBitSize(opaque_compiler_type_t type,
                             ExecutionContextScope *exe_scope) {
   VALID_OR_RETURN_CHECK_TYPE(type, llvm::createStringError("invalid context"));
-  LLDB_SCOPED_TIMER();
 
   // If the type has type parameters, bind them first.
   swift::CanType swift_can_type(GetCanonicalSwiftType(type));
@@ -6651,7 +6624,6 @@ std::optional<uint64_t>
 SwiftASTContext::GetByteStride(opaque_compiler_type_t type,
                                ExecutionContextScope *exe_scope) {
   VALID_OR_RETURN_CHECK_TYPE(type, std::nullopt);
-  LLDB_SCOPED_TIMER();
 
   // If the type has type parameters, bind them first.
   swift::CanType swift_can_type(GetCanonicalSwiftType(type));
@@ -6694,7 +6666,6 @@ std::optional<size_t>
 SwiftASTContext::GetTypeBitAlign(opaque_compiler_type_t type,
                                  ExecutionContextScope *exe_scope) {
   VALID_OR_RETURN_CHECK_TYPE(type, std::nullopt);
-  LLDB_SCOPED_TIMER();
 
   // If the type has type parameters, bind them first.
   swift::CanType swift_can_type(GetCanonicalSwiftType(type));
@@ -6843,7 +6814,6 @@ SwiftASTContext::GetNumChildren(opaque_compiler_type_t type,
                                 bool omit_empty_base_classes,
                                 const ExecutionContext *exe_ctx) {
   VALID_OR_RETURN_CHECK_TYPE(type, llvm::createStringError("invalid type"));
-  LLDB_SCOPED_TIMER();
 
   swift::CanType swift_can_type(GetCanonicalSwiftType(type));
 
@@ -7219,7 +7189,6 @@ CompilerType SwiftASTContext::GetFieldAtIndex(opaque_compiler_type_t type,
                                               uint32_t *bitfield_bit_size_ptr,
                                               bool *is_bitfield_ptr) {
   VALID_OR_RETURN_CHECK_TYPE(type, CompilerType());
-  LLDB_SCOPED_TIMER();
 
   swift::CanType swift_can_type(GetCanonicalSwiftType(type));
 
@@ -7571,7 +7540,6 @@ llvm::Expected<CompilerType> SwiftASTContext::GetChildCompilerTypeAtIndex(
     bool &child_is_base_class, bool &child_is_deref_of_parent,
     ValueObject *valobj, uint64_t &language_flags) {
   VALID_OR_RETURN_CHECK_TYPE(type, CompilerType());
-  LLDB_SCOPED_TIMER();
 
   auto get_type_size = [&exe_ctx](CompilerType type) {
     auto *exe_scope =
@@ -7964,7 +7932,6 @@ size_t SwiftASTContext::GetIndexOfChildMemberWithName(
     opaque_compiler_type_t type, StringRef name, ExecutionContext *exe_ctx,
     bool omit_empty_base_classes, std::vector<uint32_t> &child_indexes) {
   VALID_OR_RETURN_CHECK_TYPE(type, 0);
-  LLDB_SCOPED_TIMER();
 
   if (!name.empty()) {
     swift::CanType swift_can_type(GetCanonicalSwiftType(type));
@@ -8368,7 +8335,6 @@ bool SwiftASTContext::DumpTypeValue(
     size_t byte_size, uint32_t bitfield_bit_size, uint32_t bitfield_bit_offset,
     ExecutionContextScope *exe_scope, bool is_base_class) {
   VALID_OR_RETURN_CHECK_TYPE(type, false);
-  LLDB_SCOPED_TIMER();
 
   swift::CanType swift_can_type(GetCanonicalSwiftType(type));
 
@@ -8548,7 +8514,6 @@ bool SwiftASTContext::DumpTypeValue(
 bool SwiftASTContext::IsImportedType(opaque_compiler_type_t type,
                                      CompilerType *original_type) {
   VALID_OR_RETURN_CHECK_TYPE(type, false);
-  LLDB_SCOPED_TIMER();
   bool success = false;
 
   if (swift::Type swift_can_type = GetSwiftType(type)) {
@@ -8700,7 +8665,6 @@ void SwiftASTContext::DumpTypeDescription(opaque_compiler_type_t type,
                                           bool print_extensions_if_available,
                                           lldb::DescriptionLevel level,
                                           ExecutionContextScope *) {
-  LLDB_SCOPED_TIMER();
   const auto initial_written_bytes = s->GetWrittenBytes();
 
   if (type) {
@@ -9021,7 +8985,6 @@ static swift::ModuleDecl *LoadOneModule(const SourceModule &module,
                                         lldb::ProcessSP process_sp,
                                         bool import_dylibs,
                                         Status &error) {
-  LLDB_SCOPED_TIMER();
   if (!module.path.size())
     return nullptr;
 
@@ -9093,7 +9056,6 @@ bool SwiftASTContextForExpressions::GetImplicitImports(
     llvm::SmallVectorImpl<swift::AttributedImport<swift::ImportedModule>>
         &modules,
     Status &error) {
-  LLDB_SCOPED_TIMER();
   if (!GetCompileUnitImports(sc, process_sp, modules, error))
     return false;
 
@@ -9262,7 +9224,6 @@ bool SwiftASTContext::GetCompileUnitImportsImpl(
     llvm::SmallVectorImpl<swift::AttributedImport<swift::ImportedModule>>
         *modules,
     Status &error) {
-  LLDB_SCOPED_TIMER();
 
   CompileUnit *compile_unit = sc.comp_unit;
   if (compile_unit && compile_unit->GetModule())
