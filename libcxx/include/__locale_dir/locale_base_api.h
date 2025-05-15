@@ -9,6 +9,8 @@
 #ifndef _LIBCPP___LOCALE_DIR_LOCALE_BASE_API_H
 #define _LIBCPP___LOCALE_DIR_LOCALE_BASE_API_H
 
+#include <__config>
+
 #if defined(_LIBCPP_MSVCRT_LIKE)
 #  include <__locale_dir/locale_base_api/win32.h>
 #elif defined(_AIX) || defined(__MVS__)
