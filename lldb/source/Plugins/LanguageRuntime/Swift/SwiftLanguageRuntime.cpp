@@ -2733,7 +2733,6 @@ UnwindPlanSP
 SwiftLanguageRuntime::GetRuntimeUnwindPlan(ProcessSP process_sp,
                                            RegisterContext *regctx,
                                            bool &behaves_like_zeroth_frame) {
-  LLDB_SCOPED_TIMER();
   auto log_expected = [](llvm::Error error) {
     Log *log = GetLog(LLDBLog::Unwind);
     LLDB_LOG_ERROR(log, std::move(error), "{0}");
@@ -2838,8 +2837,6 @@ SwiftLanguageRuntime::GetRuntimeUnwindPlan(ProcessSP process_sp,
 UnwindPlanSP SwiftLanguageRuntime::GetFollowAsyncContextUnwindPlan(
     ProcessSP process_sp, RegisterContext *regctx, ArchSpec &arch,
     bool &behaves_like_zeroth_frame) {
-  LLDB_SCOPED_TIMER();
-
   UnwindPlan::RowSP row(new UnwindPlan::Row);
   const int32_t ptr_size = 8;
   row->SetOffset(0);
