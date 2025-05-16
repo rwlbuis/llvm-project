@@ -806,8 +806,6 @@ SwiftRuntimeTypeVisitor::VisitImpl(std::optional<unsigned> visit_only,
                                    VisitCallback visit_callback)
 
 {
-  if (m_type.GetMangledTypeName() == "$s1a10PointUtils_XlD")
-    llvm::errs();
   if (!m_type)
     return llvm::createStringError("invalid type");
 
