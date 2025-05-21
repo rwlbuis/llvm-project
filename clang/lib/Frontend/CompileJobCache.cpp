@@ -319,8 +319,7 @@ std::optional<int> CompileJobCache::initialize(CompilerInstance &Clang) {
 
   llvm::PrefixMapper PrefixMapper;
   llvm::SmallVector<llvm::MappedPrefix> Split;
-  llvm::MappedPrefix::transformJoinedIfValid(CacheOpts.PathPrefixMappings,
-                                             Split);
+  llvm::MappedPrefix::transformPairs(CacheOpts.PathPrefixMappings, Split);
   for (const auto &MappedPrefix : Split) {
     // We use the inverse mapping because the \p PrefixMapper will be used for
     // de-canonicalization of paths.
@@ -607,7 +606,7 @@ Expected<std::optional<int>> CompileJobCache::replayCachedResult(
 
   llvm::PrefixMapper PrefixMapper;
   llvm::SmallVector<llvm::MappedPrefix> Split;
-  llvm::MappedPrefix::transformJoinedIfValid(
+  llvm::MappedPrefix::transformPairs(
       Clang.getFrontendOpts().PathPrefixMappings, Split);
   for (const auto &MappedPrefix : Split) {
     // We use the inverse mapping because the \p PrefixMapper will be used for

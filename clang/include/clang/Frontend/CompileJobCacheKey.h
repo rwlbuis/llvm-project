@@ -40,7 +40,7 @@ struct CompileJobCachingOptions {
   /// See \c FrontendOptions::WriteOutputAsCASID.
   bool WriteOutputAsCASID;
   /// See \c FrontendOptions::PathPrefixMappings.
-  std::vector<std::string> PathPrefixMappings;
+  std::vector<std::pair<std::string, std::string>> PathPrefixMappings;
 };
 
 /// Create a cache key for the given \c CompilerInvocation as a \c CASID. If \p
