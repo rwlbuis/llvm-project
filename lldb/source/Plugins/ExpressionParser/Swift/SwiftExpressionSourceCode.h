@@ -19,7 +19,8 @@ namespace lldb_private {
 
 /// Parse a name such as "$τ_0_0".
 std::optional<std::pair<unsigned, unsigned>>
-ParseSwiftGenericParameter(llvm::StringRef name);
+ParseSwiftGenericParameter(llvm::StringRef name,
+                           bool expect_dollar_prefix = true);
 
 class SwiftExpressionSourceCode : public ExpressionSourceCode {
 public:
