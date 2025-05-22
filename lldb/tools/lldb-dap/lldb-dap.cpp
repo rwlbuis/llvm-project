@@ -540,15 +540,7 @@ void EventThreadFunction(DAP &dap) {
 
             llvm::StringRef reason;
             bool id_only = false;
-            if (event_mask & lldb::SBTarget::eBroadcastBitModulesLoaded) {
-              dap.modules.insert(module_id);
-              reason = "new";
-            } else {
-              // If this is a module we've never told the client about, don't
-              // send an event.
-              if (!dap.modules.contains(module_id))
-                continue;
-
+            if (dap.modules.contains(module_id)) {
               if (event_mask & lldb::SBTarget::eBroadcastBitModulesUnloaded) {
                 dap.modules.erase(module_id);
                 reason = "removed";
@@ -556,6 +548,9 @@ void EventThreadFunction(DAP &dap) {
               } else {
                 reason = "changed";
               }
+            } else {
+              dap.modules.insert(module_id);
+              reason = "new";
             }
 
             llvm::json::Object body;
