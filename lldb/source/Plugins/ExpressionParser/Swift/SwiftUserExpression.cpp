@@ -327,7 +327,6 @@ static llvm::Error AddVariableInfo(
     return llvm::Error::success();
 
   CompilerType target_type;
-  swift::Type unbound_type;
   bool should_not_bind_generic_types =
       !SwiftASTManipulator::ShouldBindGenericTypes(bind_generic_types);
   bool is_unbound_pack =
@@ -339,17 +338,11 @@ static llvm::Error AddVariableInfo(
   // opaque pointer type. This is necessary because we don't bind the generic
   // parameters, and we can't have a type with unbound generics in a non-generic
   // function.
-  if (should_not_bind_generic_types && is_self) {
+  if (should_not_bind_generic_types && is_self)
     target_type = ast_context.GetBuiltinRawPointerType();
-    CompilerType var_type = SwiftExpressionParser::ResolveVariable(
-        variable_sp, stack_frame_sp, runtime, use_dynamic, bind_generic_types);
-    if (auto unbound_type_or_err = ast_context.GetSwiftType(var_type))
-      unbound_type = *unbound_type_or_err;
-    else
-      return unbound_type_or_err.takeError();
-  } else if (is_unbound_pack) {
+  else if (is_unbound_pack)
     target_type = variable_sp->GetType()->GetForwardCompilerType();
-  } else {
+  else {
     CompilerType var_type = SwiftExpressionParser::ResolveVariable(
         variable_sp, stack_frame_sp, runtime, use_dynamic, bind_generic_types);
 
@@ -440,7 +433,7 @@ static llvm::Error AddVariableInfo(
       metadata_sp,
       variable_sp->IsConstant() ? swift::VarDecl::Introducer::Let
                                 : swift::VarDecl::Introducer::Var,
-      false, is_unbound_pack, unbound_type);
+      false, is_unbound_pack);
   processed_variables.insert(overridden_name);
   return llvm::Error::success();
 }

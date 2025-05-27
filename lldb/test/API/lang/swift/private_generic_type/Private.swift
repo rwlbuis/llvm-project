@@ -9,43 +9,6 @@ private class InvisibleClass {
   public var someNumber = 42
 }
 
-private class PImpl: P {
-    typealias Element = PImpl2
-
-    private let str = "This is PImpl"
-    func getElement() -> Element {
-        PImpl2()
-    }
-    func protocolFunc() -> String {
-        "Hello from PImpl"
-    }
-    static func staticProtocolFunc() -> String{
-        "Hello from static PImpl"
-    }
-}
-
-private class PImpl2: P {
-    typealias Element = P2Impl
-
-    func getElement() -> Element {
-        return P2Impl()
-    }
-
-    func protocolFunc() -> String {
-        "Hello from PImpl2"
-    }
-
-    static func staticProtocolFunc() -> String{
-        "Hello from static PImpl2"
-    }
-}
-
-private class P2Impl: P2 {
-    func protocolFunc2() -> String {
-        "Hello from P2Impl"
-    }
-}
-
 public func privateDoIt()  {
   let structWrapper = StructWrapper(InvisibleStruct())
   structWrapper.foo()
@@ -71,9 +34,4 @@ public func privateDoIt()  {
 
   let nestedParameters = Nested.Parameters(InvisibleClass(), InvisibleStruct())
   nestedParameters.foo()
-
-  let pHolder = PHolder(t: PImpl())
-  pHolder.foo()
-
-
 }

@@ -170,31 +170,3 @@ class TestSwiftPrivateGenericType(TestBase):
         self.expect("expr --bind-generic-types auto -- self", 
                     substrs=["Couldn't realize Swift AST type of self."], 
                     error=True)
-
-        breakpoint = target.BreakpointCreateBySourceRegex(
-            'break here for constrained protocol', lldb.SBFileSpec('Public.swift'), None)
-        lldbutil.continue_to_breakpoint(process, breakpoint)
-        self.expect("expr --bind-generic-types true -- self", 
-                    substrs=["Couldn't realize Swift AST type of self."], 
-                    error=True)
-        self.expect("expr --bind-generic-types false -- self", 
-                    substrs=["Public.PHolder<Private.PImpl>", 
-                             'str = "This is PImpl"'])
-        self.expect("expr --bind-generic-types auto -- self", 
-                    substrs=["Public.PHolder<Private.PImpl>", 
-                             'str = "This is PImpl"'])
-        self.expect("expr -- self", 
-                    substrs=["Public.PHolder<Private.PImpl>", 
-                             'str = "This is PImpl"'])
-        self.expect("expr --bind-generic-types false -- t", 
-                    substrs=["Private.PImpl", 
-                             'str = "This is PImpl"'])
-
-        self.expect("expr --bind-generic-types false -- t.protocolFunc()", 
-                    substrs=["Hello from PImpl"]) 
-        self.expect("expr --bind-generic-types false -- t.getElement().protocolFunc()", 
-                    substrs=["Hello from PImpl2"]) 
-        self.expect("expr --bind-generic-types false -- t.getElement().getElement().protocolFunc2()", 
-                    substrs=["Hello from P2Impl"]) 
-
-

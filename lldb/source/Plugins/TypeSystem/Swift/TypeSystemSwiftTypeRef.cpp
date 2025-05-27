@@ -4863,7 +4863,6 @@ bool TypeSystemSwiftTypeRef::DumpTypeValue(
       format = eFormatPointer;
       LLVM_FALLTHROUGH;
     case Node::Kind::BuiltinTypeName:
-    case Node::Kind::DependentMemberType:
     case Node::Kind::DependentGenericParamType:
     case Node::Kind::FunctionType:
     case Node::Kind::NoEscapeFunctionType:

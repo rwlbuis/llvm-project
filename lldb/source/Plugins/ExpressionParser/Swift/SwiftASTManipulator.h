@@ -103,11 +103,6 @@ public:
 
   struct VariableInfo {
     CompilerType GetType() const { return m_type; }
-    /// The unbound swift::Type. Unbound means that the generic type parameters
-    /// are not substituted (for example, Array<T> instead of Array<Int>). Only
-    /// valid the the variable that represents self when evaluating the
-    /// expression without the generic types.
-    const swift::Type &GetUnboundType() const { return m_unbound_type; }
     swift::Identifier GetName() const { return m_name; }
     VariableMetadata *GetMetadata() const { return m_metadata.get(); }
     void TakeMetadata(VariableMetadata *vmd) { m_metadata.reset(vmd); }
@@ -118,7 +113,6 @@ public:
     bool IsOutermostMetadataPointer() const {
       return m_name.str().starts_with("$τ_0_");
     }
-    bool IsWitnessTable() const { return m_name.str().starts_with("$WT"); }
     bool IsSelf() const {
       return m_name.str() == "$__lldb_injected_self";
     }
@@ -131,16 +125,14 @@ public:
     VariableInfo(CompilerType type, swift::Identifier name,
                  VariableMetadataSP metadata,
                  swift::VarDecl::Introducer introducer,
-                 bool is_capture_list = false, bool is_unbound_pack = false,
-                 swift::Type unbound_type = {})
-        : m_type(type), m_unbound_type(unbound_type), m_name(name),
-          m_metadata(metadata), m_var_introducer(introducer),
-          m_is_capture_list(is_capture_list),
+                 bool is_capture_list = false, bool is_unbound_pack = false)
+        : m_type(type), m_name(name), m_metadata(metadata),
+          m_var_introducer(introducer), m_is_capture_list(is_capture_list),
           m_is_unbound_pack(is_unbound_pack) {}
     VariableInfo(const VariableInfo &other)
-        : m_type(other.m_type), m_unbound_type(other.m_unbound_type),
-          m_name(other.m_name), m_metadata(other.m_metadata),
-          m_decl(other.m_decl), m_var_introducer(other.m_var_introducer),
+        : m_type(other.m_type), m_name(other.m_name),
+          m_metadata(other.m_metadata), m_decl(other.m_decl),
+          m_var_introducer(other.m_var_introducer),
           m_lookup_error(other.m_lookup_error.Clone()),
           m_is_capture_list(other.m_is_capture_list),
           m_is_unbound_pack(other.m_is_unbound_pack) {}
@@ -158,7 +150,6 @@ public:
       m_lookup_error = other.m_lookup_error.Clone();
       m_is_capture_list = other.m_is_capture_list;
       m_is_unbound_pack = other.m_is_unbound_pack;
-      m_unbound_type = other.m_unbound_type;
       return *this;
     }
 
@@ -174,7 +165,6 @@ public:
 
   protected:
     CompilerType m_type;
-    swift::Type m_unbound_type;
     swift::Identifier m_name;
     VariableMetadataSP m_metadata;
     swift::VarDecl *m_decl = nullptr;

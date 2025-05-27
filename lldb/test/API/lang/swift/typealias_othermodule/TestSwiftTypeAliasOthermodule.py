@@ -11,27 +11,16 @@ class TestSwiftTypeAliasOtherModule(TestBase):
         """Test that type aliases can be imported from reflection metadata"""
         arch = self.getArchitecture()
         self.build()
-        self.expect("settings set symbols.swift-load-conformances true")
+        self.expect('settings set symbols.swift-load-conformances true')
         log = self.getBuildArtifact("types.log")
         self.runCmd('log enable lldb expr types -f "%s"' % log)
         lldbutil.run_to_source_breakpoint(
             self, "break here", lldb.SBFileSpec("main.swift"), extra_images=["Dylib"]
         )
         self.expect("frame variable -- payload", substrs=["Bool", "true"])
-        self.expect(
-            "expr --bind-generic-types false -- payload", substrs=["Bool", "true"]
-        )
-        self.expect(
-            "expr --bind-generic-types true -- payload",
-            substrs=["Dylib.Impl.Payload", "true"],
-        )
-
+        self.expect("expr -- payload", substrs=["Dylib.Impl.Payload", "true"])
         self.expect("continue")
         self.expect("frame variable -- payload", substrs=["Bool", "true"])
         self.expect(
-            "expr -bind-generic-types false -- payload", substrs=["Bool", "true"]
-        )
-        self.expect(
-            "expr --bind-generic-types true -- payload",
-            substrs=["Dylib.GenericImpl<Bool>.Payload", "true"],
+            "expr -- payload", substrs=["Dylib.GenericImpl<Bool>.Payload", "true"]
         )
