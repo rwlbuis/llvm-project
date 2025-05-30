@@ -34,6 +34,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Threading.h"
@@ -204,6 +205,13 @@ struct DAP {
   // empty; if the previous expression was a variable expression, this string
   // will contain that expression.
   std::string last_nonempty_var_expression;
+
+  /// Keep track of all the modules our client knows about: either through the
+  /// modules request or the module events.
+  /// @{
+  std::mutex modules_mutex;
+  llvm::StringSet<> modules;
+  /// @}
 
   DAP(llvm::StringRef path, std::ofstream *log, ReplMode repl_mode,
       StreamDescriptor input, StreamDescriptor output);

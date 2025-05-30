@@ -39,12 +39,15 @@
 #include "lldb/Symbol/FuncUnwinders.h"
 #include "lldb/Symbol/Function.h"
 #include "lldb/Symbol/VariableList.h"
+#include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
 #include "lldb/Target/UnwindLLDB.h"
+#include "lldb/Utility/ConstString.h"
 #include "lldb/Utility/ErrorMessages.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/OptionParsing.h"
+#include "lldb/Utility/Status.h"
 #include "lldb/Utility/StructuredData.h"
 #include "lldb/Utility/Timer.h"
 #include "lldb/ValueObject/ValueObject.h"
@@ -68,6 +71,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FormatAdapters.h"
 #include "llvm/Support/Memory.h"
+#include <optional>
 
 // FIXME: we should not need this
 #include "Plugins/Language/Swift/SwiftFormatters.h"
@@ -868,8 +872,14 @@ std::string SwiftLanguageRuntime::GetObjectDescriptionExpr_Copy(
 
   auto swift_ast_ctx =
       static_type.GetTypeSystem().dyn_cast_or_null<TypeSystemSwift>();
-  if (swift_ast_ctx)
-    static_type = BindGenericTypeParameters(*frame_sp, static_type);
+  if (swift_ast_ctx) {
+    auto bound_type_or_err = BindGenericTypeParameters(*frame_sp, static_type);
+    if (!bound_type_or_err) {
+      LLDB_LOG_ERROR(log, bound_type_or_err.takeError(), "{0}");
+      return {};
+    }
+    static_type = *bound_type_or_err;
+  }
 
   auto stride = 0;
   auto opt_stride = static_type.GetByteStride(frame_sp.get());
@@ -916,9 +926,10 @@ llvm::Error SwiftLanguageRuntime::RunObjectDescriptionExpr(
   Log *log(GetLog(LLDBLog::DataFormatters | LLDBLog::Expressions));
   ValueObjectSP result_sp;
   EvaluateExpressionOptions eval_options;
+  eval_options.SetUnwindOnError(true);
   eval_options.SetLanguage(lldb::eLanguageTypeSwift);
   eval_options.SetSuppressPersistentResult(true);
-  eval_options.SetGenerateDebugInfo(true);
+  eval_options.SetIgnoreBreakpoints(true);
   eval_options.SetTimeout(GetProcess().GetUtilityExpressionTimeout());
 
   StackFrameSP frame_sp = object.GetFrameSP();
@@ -2474,14 +2485,21 @@ static llvm::Expected<addr_t> ReadPtrFromAddr(Process &process, addr_t addr,
 /// simplified version of the methods in RegisterContextUnwind, since plumbing
 /// access to those here would be challenging.
 static llvm::Expected<addr_t> GetCFA(Process &process, RegisterContext &regctx,
-                                     RegisterKind regkind,
-                                     UnwindPlan::Row::FAValue cfa_loc) {
+                                     addr_t pc_offset,
+                                     UnwindPlan &unwind_plan) {
+  UnwindPlan::RowSP row = unwind_plan.GetRowForFunctionOffset(pc_offset);
+  if (!row)
+    return llvm::createStringError(
+        "SwiftLanguageRuntime: Invalid Unwind Row when computing CFA");
+
+  UnwindPlan::Row::FAValue cfa_loc = row->GetCFAValue();
+
   using ValueType = UnwindPlan::Row::FAValue::ValueType;
   switch (cfa_loc.GetValueType()) {
   case ValueType::isRegisterPlusOffset: {
     unsigned regnum = cfa_loc.GetRegisterNumber();
-    if (llvm::Expected<addr_t> regvalue =
-            ReadRegisterAsAddress(regctx, regkind, regnum))
+    if (llvm::Expected<addr_t> regvalue = ReadRegisterAsAddress(
+            regctx, unwind_plan.GetRegisterKind(), regnum))
       return *regvalue + cfa_loc.GetOffset();
     else
       return regvalue;
@@ -2513,13 +2531,8 @@ static UnwindPlanSP GetUnwindPlanForAsyncRegister(FuncUnwinders &unwinders,
   return unwinders.GetUnwindPlanAtNonCallSite(target, thread);
 }
 
-/// Attempts to use UnwindPlans that inspect assembly to recover the entry value
-/// of the async context register. This is a simplified version of the methods
-/// in RegisterContextUnwind, since plumbing access to those here would be
-/// challenging.
-static llvm::Expected<addr_t> ReadAsyncContextRegisterFromUnwind(
-    SymbolContext &sc, Process &process, Address pc, Address func_start_addr,
-    RegisterContext &regctx, AsyncUnwindRegisterNumbers regnums) {
+static llvm::Expected<UnwindPlanSP>
+GetAsmUnwindPlan(Address pc, SymbolContext &sc, Thread &thread) {
   FuncUnwindersSP unwinders =
       pc.GetModule()->GetUnwindTable().GetFuncUnwindersContainingAddress(pc,
                                                                          sc);
@@ -2528,92 +2541,184 @@ static llvm::Expected<addr_t> ReadAsyncContextRegisterFromUnwind(
                                    "function unwinder at address 0x%8.8" PRIx64,
                                    pc.GetFileAddress());
 
-  Target &target = process.GetTarget();
-  UnwindPlanSP unwind_plan =
-      GetUnwindPlanForAsyncRegister(*unwinders, target, regctx.GetThread());
+  UnwindPlanSP unwind_plan = GetUnwindPlanForAsyncRegister(
+      *unwinders, thread.GetProcess()->GetTarget(), thread);
   if (!unwind_plan)
     return llvm::createStringError(
         "SwiftLanguageRuntime: Failed to find non call site unwind plan at "
         "address 0x%8.8" PRIx64,
         pc.GetFileAddress());
+  return unwind_plan;
+}
 
-  const RegisterKind unwind_regkind = unwind_plan->GetRegisterKind();
-  UnwindPlan::RowSP row = unwind_plan->GetRowForFunctionOffset(
-      pc.GetFileAddress() - func_start_addr.GetFileAddress());
-
-  // To request info about a register from the unwind plan, the register must
-  // be in the same domain as the unwind plan's registers.
-  uint32_t async_reg_unwind_regdomain;
+static llvm::Expected<uint32_t> GetFpRegisterNumber(UnwindPlan &unwind_plan,
+                                                    RegisterContext &regctx) {
+  uint32_t fp_unwind_regdomain;
   if (!regctx.ConvertBetweenRegisterKinds(
-          regnums.GetRegisterKind(), regnums.async_ctx_regnum, unwind_regkind,
-          async_reg_unwind_regdomain)) {
+          lldb::eRegisterKindGeneric, LLDB_REGNUM_GENERIC_FP,
+          unwind_plan.GetRegisterKind(), fp_unwind_regdomain)) {
     // This should never happen.
     // If asserts are disabled, return an error to avoid creating an invalid
     // unwind plan.
-    auto error_msg = "SwiftLanguageRuntime: Failed to convert register domains";
+    const auto *error_msg =
+        "SwiftLanguageRuntime: Failed to convert register domains";
     llvm_unreachable(error_msg);
     return llvm::createStringError(error_msg);
   }
+  return fp_unwind_regdomain;
+}
 
-  // If the plan doesn't have information about the async register, we can use
-  // its current value, as this is a callee saved register.
-  UnwindPlan::Row::AbstractRegisterLocation regloc;
-  if (!row->GetRegisterInfo(async_reg_unwind_regdomain, regloc))
+struct FrameSetupInfo {
+  addr_t frame_setup_func_offset;
+  int fp_cfa_offset;
+};
+
+/// Detect the point in the function where the prologue created a frame,
+/// returning:
+/// 1. The offset of the first instruction after that point. For a frameless
+/// function, this offset is large positive number, so that PC can still be
+/// compared against it.
+/// 2. The CFA offset at which FP is stored, meaningless in the frameless case.
+static llvm::Expected<FrameSetupInfo>
+GetFrameSetupInfo(UnwindPlan &unwind_plan, RegisterContext &regctx) {
+  using RowSP = UnwindPlan::RowSP;
+  using AbstractRegisterLocation = UnwindPlan::Row::AbstractRegisterLocation;
+
+  llvm::Expected<uint32_t> fp_unwind_regdomain =
+      GetFpRegisterNumber(unwind_plan, regctx);
+  if (!fp_unwind_regdomain)
+    return fp_unwind_regdomain.takeError();
+
+  // Look at the first few (12) rows of the plan and store FP's location.
+  // This number is based on AAPCS, with 10 callee-saved GPRs and 8 floating
+  // point registers. When STP instructions are used, the plan would have one
+  // initial row, nine rows of saving callee-saved registers, and two standard
+  // prologue rows (fp+lr and sp).
+  const int upper_bound = std::min(12, unwind_plan.GetRowCount());
+  llvm::SmallVector<AbstractRegisterLocation, 12> fp_locs;
+  for (int row_idx = 0; row_idx < upper_bound; row_idx++) {
+    RowSP row = unwind_plan.GetRowAtIndex(row_idx);
+    AbstractRegisterLocation regloc;
+    if (!row->GetRegisterInfo(*fp_unwind_regdomain, regloc))
+      regloc.SetSame();
+    fp_locs.push_back(regloc);
+  }
+
+  // Find first location where FP is stored *at* some CFA offset.
+  auto *it = llvm::find_if(
+      fp_locs, [](auto fp_loc) { return fp_loc.IsAtCFAPlusOffset(); });
+
+  // This is a frameless function, use large positive offset so that a PC can
+  // still be compared against it.
+  if (it == fp_locs.end())
+    return FrameSetupInfo{std::numeric_limits<addr_t>::max(), 0};
+
+  // This is an async function with a frame. The prologue roughly follows this
+  // sequence of instructions:
+  // adjust sp
+  // save lr        @ CFA-8
+  // save fp        @ CFA-16  << `it` points to this row.
+  // save async_reg @ CFA-24  << subsequent row.
+  // Use subsequent row, if available.
+  // Pointer auth may introduce more instructions, but they don't affect the
+  // unwinder rows / store to the stack.
+  int row_idx = it - fp_locs.begin();
+  int next_row_idx = row_idx + 1;
+
+  // If subsequent row is invalid, approximate through current row.
+  if (next_row_idx == unwind_plan.GetRowCount() ||
+      next_row_idx == upper_bound ||
+      !fp_locs[next_row_idx].IsAtCFAPlusOffset()) {
+    LLDB_LOG(GetLog(LLDBLog::Unwind), "SwiftLanguageRuntime:: UnwindPlan did "
+                                      "not contain a valid row after FP setup");
+    UnwindPlan::RowSP row = unwind_plan.GetRowAtIndex(row_idx);
+    return FrameSetupInfo{row->GetOffset(), fp_locs[row_idx].GetOffset()};
+  }
+
+  UnwindPlan::RowSP subsequent_row = unwind_plan.GetRowAtIndex(next_row_idx);
+  return FrameSetupInfo{subsequent_row->GetOffset(),
+                        fp_locs[next_row_idx].GetOffset()};
+}
+
+/// Reads the async register from its ABI-guaranteed stack-slot, or directly
+/// from the register depending on where pc is relative to the start of the
+/// function.
+static llvm::Expected<addr_t> ReadAsyncContextRegisterFromUnwind(
+    SymbolContext &sc, Process &process, Address pc, Address func_start_addr,
+    RegisterContext &regctx, AsyncUnwindRegisterNumbers regnums) {
+  llvm::Expected<UnwindPlanSP> unwind_plan =
+      GetAsmUnwindPlan(pc, sc, regctx.GetThread());
+  if (!unwind_plan)
+    return unwind_plan.takeError();
+  llvm::Expected<FrameSetupInfo> frame_setup =
+      GetFrameSetupInfo(**unwind_plan, regctx);
+  if (!frame_setup)
+    return frame_setup.takeError();
+
+  // Is PC before the frame formation? If so, use async register directly.
+  // This handles frameless functions, as frame_setup_func_offset is INT_MAX.
+  addr_t pc_offset = pc.GetFileAddress() - func_start_addr.GetFileAddress();
+  if (pc_offset < frame_setup->frame_setup_func_offset)
     return ReadRegisterAsAddress(regctx, regnums.GetRegisterKind(),
                                  regnums.async_ctx_regnum);
 
-  // Handle the few abstract locations we are likely to encounter.
-  using RestoreType = UnwindPlan::Row::AbstractRegisterLocation::RestoreType;
-  RestoreType loctype = regloc.GetLocationType();
-  switch (loctype) {
-  case RestoreType::same:
-    return ReadRegisterAsAddress(regctx, regnums.GetRegisterKind(),
-                                 regnums.async_ctx_regnum);
-  case RestoreType::inOtherRegister: {
-    unsigned regnum = regloc.GetRegisterNumber();
-    return ReadRegisterAsAddress(regctx, unwind_regkind, regnum);
-  }
-  case RestoreType::atCFAPlusOffset: {
-    llvm::Expected<addr_t> cfa =
-        GetCFA(process, regctx, unwind_regkind, row->GetCFAValue());
-    if (!cfa)
-      return cfa.takeError();
-    return ReadPtrFromAddr(process, *cfa, regloc.GetOffset());
-  }
-  case RestoreType::isCFAPlusOffset: {
-    if (llvm::Expected<addr_t> cfa =
-            GetCFA(process, regctx, unwind_regkind, row->GetCFAValue()))
-      return *cfa + regloc.GetOffset();
-    else
-      return cfa;
-  }
-  case RestoreType::isConstant:
-    return regloc.GetConstant();
-  case RestoreType::unspecified:
-  case RestoreType::undefined:
-  case RestoreType::atAFAPlusOffset:
-  case RestoreType::isAFAPlusOffset:
-  case RestoreType::isDWARFExpression:
-  case RestoreType::atDWARFExpression:
-    break;
-  }
-  return llvm::createStringError(
-      "SwiftLanguageRuntime: Unsupported register location type = %d", loctype);
+  // A frame was formed, and FP was saved at a CFA offset. Compute CFA and read
+  // the location beneath where FP was saved.
+  llvm::Expected<addr_t> cfa =
+      GetCFA(process, regctx, pc_offset, **unwind_plan);
+  if (!cfa)
+    return cfa.takeError();
+
+  addr_t async_reg_addr = process.FixDataAddress(
+      *cfa + frame_setup->fp_cfa_offset - process.GetAddressByteSize());
+  Status error;
+  addr_t async_reg = process.ReadPointerFromMemory(async_reg_addr, error);
+  if (error.Fail())
+    return error.ToError();
+  return async_reg;
+}
+
+static llvm::Expected<bool>
+DoesContinuationPointToSameFunction(addr_t async_reg, SymbolContext &sc,
+                                    Process &process) {
+  llvm::Expected<addr_t> continuation_ptr = ReadPtrFromAddr(
+      process, async_reg, /*offset*/ process.GetAddressByteSize());
+  if (!continuation_ptr)
+    return continuation_ptr.takeError();
+
+  Address continuation_addr;
+  continuation_addr.SetLoadAddress(process.FixCodeAddress(*continuation_ptr),
+                                   &process.GetTarget());
+  if (sc.function)
+    return sc.function->GetAddressRange().ContainsLoadAddress(
+        continuation_addr, &process.GetTarget());
+  assert(sc.symbol);
+  return sc.symbol->ContainsFileAddress(continuation_addr.GetFileAddress());
 }
 
 /// Returns true if the async register should be dereferenced once to obtain the
 /// CFA of the currently executing function. This is the case at the start of
 /// "Q" funclets, before the low level code changes the meaning of the async
 /// register to not require the indirection.
-/// The end of the prologue approximates the transition point.
+/// The end of the prologue approximates the transition point well in non-arm64e
+/// targets.
 /// FIXME: In the few instructions between the end of the prologue and the
 /// transition point, this approximation fails. rdar://139676623
 static llvm::Expected<bool> IsIndirectContext(Process &process,
                                               StringRef mangled_name,
-                                              Address pc, SymbolContext &sc) {
+                                              Address pc, SymbolContext &sc,
+                                              addr_t async_reg) {
   if (!SwiftLanguageRuntime::IsSwiftAsyncAwaitResumePartialFunctionSymbol(
           mangled_name))
     return false;
+
+  // For arm64e, pointer authentication generates branches that cause stepping
+  // algorithms to stop & unwind in more places. The "end of the prologue"
+  // approximation fails in those; instead, check whether the continuation
+  // pointer still points to the currently executing function. This works for
+  // all instructions, but fails when direct recursion is involved.
+  if (process.GetTarget().GetArchitecture().GetTriple().isArm64e())
+    return DoesContinuationPointToSameFunction(async_reg, sc, process);
 
   // This is checked prior to calling this function.
   assert(sc.function || sc.symbol);
@@ -2637,7 +2742,6 @@ UnwindPlanSP
 SwiftLanguageRuntime::GetRuntimeUnwindPlan(ProcessSP process_sp,
                                            RegisterContext *regctx,
                                            bool &behaves_like_zeroth_frame) {
-  LLDB_SCOPED_TIMER();
   auto log_expected = [](llvm::Error error) {
     Log *log = GetLog(LLDBLog::Unwind);
     LLDB_LOG_ERROR(log, std::move(error), "{0}");
@@ -2697,7 +2801,7 @@ SwiftLanguageRuntime::GetRuntimeUnwindPlan(ProcessSP process_sp,
     return log_expected(async_reg.takeError());
 
   llvm::Expected<bool> maybe_indirect_context =
-      IsIndirectContext(*process_sp, mangled_name, pc, sc);
+      IsIndirectContext(*process_sp, mangled_name, pc, sc, *async_reg);
   if (!maybe_indirect_context)
     return log_expected(maybe_indirect_context.takeError());
 
@@ -2742,8 +2846,6 @@ SwiftLanguageRuntime::GetRuntimeUnwindPlan(ProcessSP process_sp,
 UnwindPlanSP SwiftLanguageRuntime::GetFollowAsyncContextUnwindPlan(
     ProcessSP process_sp, RegisterContext *regctx, ArchSpec &arch,
     bool &behaves_like_zeroth_frame) {
-  LLDB_SCOPED_TIMER();
-
   UnwindPlan::RowSP row(new UnwindPlan::Row);
   const int32_t ptr_size = 8;
   row->SetOffset(0);
@@ -2869,4 +2971,109 @@ llvm::Expected<lldb::addr_t> GetTaskAddrFromThreadLocalStorage(Thread &thread) {
   return task_addr;
 #endif
 }
+
+namespace {
+
+/// Lightweight wrapper around TaskStatusRecord pointers, providing:
+///   * traversal over the embedded linnked list of status records
+///   * information contained within records
+///
+/// Currently supports TaskNameStatusRecord. See swift/ABI/TaskStatus.h
+struct TaskStatusRecord {
+  Process &process;
+  addr_t addr;
+  size_t addr_size;
+
+  TaskStatusRecord(Process &process, addr_t addr)
+      : process(process), addr(addr) {
+    addr_size = process.GetAddressByteSize();
+  }
+
+  operator bool() const { return addr && addr != LLDB_INVALID_ADDRESS; }
+
+  // The offset of TaskStatusRecord members. The unit is pointers, and must be
+  // converted to bytes based on the target's address size.
+  static constexpr unsigned FlagsPointerOffset = 0;
+  static constexpr unsigned ParentPointerOffset = 1;
+  static constexpr unsigned TaskNamePointerOffset = 2;
+
+  enum Kind : uint64_t {
+    TaskName = 6,
+  };
+
+  uint64_t getKind(Status &status) {
+    const offset_t flagsByteOffset = FlagsPointerOffset * addr_size;
+    if (status.Success())
+      return process.ReadUnsignedIntegerFromMemory(
+          addr + flagsByteOffset, addr_size, UINT64_MAX, status);
+    return UINT64_MAX;
+  }
+
+  std::optional<std::string> getName(Status &status) {
+    if (getKind(status) != Kind::TaskName)
+      return {};
+
+    const offset_t taskNameByteOffset = TaskNamePointerOffset * addr_size;
+    addr_t name_addr =
+        process.ReadPointerFromMemory(addr + taskNameByteOffset, status);
+    if (!status.Success())
+      return {};
+
+    std::string name;
+    process.ReadCStringFromMemory(name_addr, name, status);
+    if (status.Success())
+      return name;
+
+    return {};
+  }
+
+  addr_t getParent(Status &status) {
+    const offset_t parentByteOffset = ParentPointerOffset * addr_size;
+    addr_t parent = LLDB_INVALID_ADDRESS;
+    if (*this && status.Success())
+      parent = process.ReadPointerFromMemory(addr + parentByteOffset, status);
+    return parent;
+  }
+};
+
+/// Lightweight wrapper around Task pointers, providing access to a Task's
+/// active status record. See swift/ABI/Task.h
+struct Task {
+  Process &process;
+  addr_t addr;
+
+  operator bool() const { return addr && addr != LLDB_INVALID_ADDRESS; }
+
+  // The offset of the active TaskStatusRecord pointer. The unit is pointers,
+  // and must be converted to bytes based on the target's address size.
+  static constexpr unsigned ActiveTaskStatusRecordPointerOffset = 13;
+
+  TaskStatusRecord getActiveTaskStatusRecord(Status &status) {
+    const offset_t activeTaskStatusRecordByteOffset =
+        ActiveTaskStatusRecordPointerOffset * process.GetAddressByteSize();
+    addr_t status_record = LLDB_INVALID_ADDRESS;
+    if (status.Success())
+      status_record = process.ReadPointerFromMemory(
+          addr + activeTaskStatusRecordByteOffset, status);
+    return {process, status_record};
+  }
+};
+
+}; // namespace
+
+llvm::Expected<std::optional<std::string>> GetTaskName(lldb::addr_t task_addr,
+                                                       Process &process) {
+  Status status;
+  Task task{process, task_addr};
+  auto status_record = task.getActiveTaskStatusRecord(status);
+  while (status_record) {
+    if (auto name = status_record.getName(status))
+      return *name;
+    status_record.addr = status_record.getParent(status);
+  }
+  if (status.Success())
+    return std::nullopt;
+  return status.takeError();
+}
+
 } // namespace lldb_private

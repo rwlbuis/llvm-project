@@ -1221,6 +1221,8 @@ bool SymbolFileDWARF::ParseImportedModules(
       SourceModule module;
       module.path.push_back(ConstString(name));
 
+      const char *include_path = module_die.GetAttributeValueAsString(
+          DW_AT_LLVM_include_path, nullptr);
       DWARFDIE parent_die = module_die;
       while ((parent_die = parent_die.GetParent())) {
         if (parent_die.Tag() != DW_TAG_module)
@@ -1228,10 +1230,16 @@ bool SymbolFileDWARF::ParseImportedModules(
         if (const char *name =
                 parent_die.GetAttributeValueAsString(DW_AT_name, nullptr))
           module.path.push_back(ConstString(name));
+
+        // Inferred submodule declarations may not have a
+        // DW_AT_LLVM_include_path. Pick the parent (aka umbrella) module's
+        // include path instead.
+        if (!include_path)
+          include_path = parent_die.GetAttributeValueAsString(
+              DW_AT_LLVM_include_path, nullptr);
       }
       std::reverse(module.path.begin(), module.path.end());
-      if (const char *include_path = module_die.GetAttributeValueAsString(
-              DW_AT_LLVM_include_path, nullptr)) {
+      if (include_path) {
         FileSpec include_spec(include_path, dwarf_cu->GetPathStyle());
         MakeAbsoluteAndRemap(include_spec, *dwarf_cu,
                              m_objfile_sp->GetModule());
@@ -3936,10 +3944,9 @@ void SymbolFileDWARF::ParseAndAppendGlobalVariable(
     break;
 
   default:
-    GetObjectFile()->GetModule()->ReportError(
-        "didn't find appropriate parent DIE for variable list for {0:x8} "
-        "{1} ({2}).\n",
-        die.GetID(), DW_TAG_value_to_name(die.Tag()), die.Tag());
+    LLDB_LOG(GetLog(DWARFLog::Lookups),
+             "{0} '{1}' ({2:x8}) is not a global variable - ignoring", tag,
+             die.GetName(), die.GetID());
     return;
   }
 
@@ -4438,6 +4445,9 @@ SymbolFileDWARFDebugMap *SymbolFileDWARF::GetDebugMapSymfile() {
 
 const std::shared_ptr<SymbolFileDWARFDwo> &SymbolFileDWARF::GetDwpSymbolFile() {
   llvm::call_once(m_dwp_symfile_once_flag, [this]() {
+    if (m_objfile_sp->GetArchitecture().GetTriple().isAppleMachO())
+      return;
+
     // Create a list of files to try and append .dwp to.
     FileSpecList symfiles;
     // Append the module's object file path.

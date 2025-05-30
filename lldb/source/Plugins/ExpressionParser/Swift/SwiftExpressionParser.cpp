@@ -239,7 +239,6 @@ public:
   bool lookupAdditions(swift::DeclBaseName Name, swift::DeclContext *DC,
                        swift::SourceLoc Loc, bool IsTypeLookup,
                        ResultVector &RV) override {
-    LLDB_SCOPED_TIMER();
     assert(SwiftASTContext::GetSwiftASTContext(&DC->getASTContext()) ==
            m_this_context);
     static unsigned counter = 0;
@@ -402,8 +401,6 @@ public:
   bool lookupAdditions(swift::DeclBaseName Name, swift::DeclContext *DC,
                        swift::SourceLoc Loc, bool IsTypeLookup,
                        ResultVector &RV) override {
-    LLDB_SCOPED_TIMER();
-
     assert(SwiftASTContext::GetSwiftASTContext(&DC->getASTContext()) ==
            m_this_context);
     static unsigned counter = 0;
@@ -462,7 +459,6 @@ public:
 static CompilerType GetSwiftTypeForVariableValueObject(
     lldb::ValueObjectSP valobj_sp, lldb::StackFrameSP &stack_frame_sp,
     SwiftLanguageRuntime *runtime, lldb::BindGenericTypes bind_generic_types) {
-  LLDB_SCOPED_TIMER();
   // Check that the passed ValueObject is valid.
   if (!valobj_sp || valobj_sp->GetError().Fail())
     return {};
@@ -470,7 +466,9 @@ static CompilerType GetSwiftTypeForVariableValueObject(
   if (!result)
     return {};
   if (SwiftASTManipulator::ShouldBindGenericTypes(bind_generic_types))
-    result = runtime->BindGenericTypeParameters(*stack_frame_sp, result);
+    result = llvm::expectedToOptional(
+                 runtime->BindGenericTypeParameters(*stack_frame_sp, result))
+                 .value_or(CompilerType());
   if (!result)
     return {};
   if (!result.GetTypeSystem()->SupportsLanguage(lldb::eLanguageTypeSwift))
@@ -488,7 +486,6 @@ CompilerType SwiftExpressionParser::ResolveVariable(
     lldb::VariableSP variable_sp, lldb::StackFrameSP &stack_frame_sp,
     SwiftLanguageRuntime *runtime, lldb::DynamicValueType use_dynamic,
     lldb::BindGenericTypes bind_generic_types) {
-  LLDB_SCOPED_TIMER();
   lldb::ValueObjectSP valobj_sp =
       stack_frame_sp->GetValueObjectForFrameVariable(variable_sp,
                                                      lldb::eNoDynamicValues);
@@ -553,8 +550,6 @@ AddRequiredAliases(Block *block, lldb::StackFrameSP &stack_frame_sp,
                    SwiftASTManipulator &manipulator,
                    lldb::DynamicValueType use_dynamic,
                    lldb::BindGenericTypes bind_generic_types) {
-  LLDB_SCOPED_TIMER();
-
   // Alias builtin types, since we can't use them directly in source code.
   auto builtin_ptr_t = swift_ast_context.GetBuiltinRawPointerType();
   auto alias = manipulator.MakeTypealias(
@@ -606,12 +601,17 @@ AddRequiredAliases(Block *block, lldb::StackFrameSP &stack_frame_sp,
 
   auto *stack_frame = stack_frame_sp.get();
   if (SwiftASTManipulator::ShouldBindGenericTypes(bind_generic_types)) {
-    imported_self_type = swift_runtime->BindGenericTypeParameters(
+    auto bound_type_or_err = swift_runtime->BindGenericTypeParameters(
         *stack_frame, imported_self_type);
-    if (!imported_self_type)
-      return llvm::createStringError(
-          "Unable to add the aliases the expression needs because the Swift "
-          "expression parser couldn't bind the type parameters for self.");
+    if (!bound_type_or_err)
+      return llvm::joinErrors(
+          llvm::createStringError(
+              "Unable to add the aliases the expression needs because the "
+              "Swift expression parser couldn't bind the type parameters for "
+              "self."),
+          bound_type_or_err.takeError());
+
+    imported_self_type = *bound_type_or_err;
   }
 
   {
@@ -730,8 +730,6 @@ static void ResolveSpecialNames(
     llvm::SmallVectorImpl<swift::Identifier> &special_names,
     llvm::SmallVectorImpl<SwiftASTManipulator::VariableInfo> &local_variables) {
   Log *log = GetLog(LLDBLog::Expressions);
-  LLDB_SCOPED_TIMER();
-  
   if (!sc.target_sp)
     return;
 
@@ -932,7 +930,6 @@ MaterializeVariable(SwiftASTManipulatorBase::VariableInfo &variable,
                     lldb::StackFrameWP &stack_frame_wp,
                     DiagnosticManager &diagnostic_manager, Log *log,
                     bool repl) {
-  LLDB_SCOPED_TIMER();
   uint64_t offset = 0;
   bool needs_init = false;
 
@@ -1224,16 +1221,17 @@ AddArchetypeTypeAliases(std::unique_ptr<SwiftASTManipulator> &code_manipulator,
     auto flavor = SwiftLanguageRuntime::GetManglingFlavor(type_name);
     auto dependent_type = typeref_typesystem->CreateGenericTypeParamType(
         info.depth, info.index, flavor);
-    auto bound_type =
+    auto bound_type_or_err =
         runtime->BindGenericTypeParameters(stack_frame, dependent_type);
-    if (!bound_type) {
-      LLDB_LOG(
-          log,
+    if (!bound_type_or_err) {
+      LLDB_LOG_ERROR(
+          log, bound_type_or_err.takeError(),
           "[AddArchetypeTypeAliases] Could not bind dependent generic param "
-          "type {0}",
+          "type {1}: {0}",
           dependent_type.GetMangledTypeName());
       continue;
     }
+    auto bound_type = *bound_type_or_err;
 
     LLDB_LOG(log,
              "[AddArchetypeTypeAliases] Binding dependent generic param "
@@ -1275,9 +1273,6 @@ SwiftExpressionParser::ParseAndImport(
     SwiftExpressionParser::SILVariableMap &variable_map, unsigned &buffer_id,
     DiagnosticManager &diagnostic_manager) {
   Log *log = GetLog(LLDBLog::Expressions);
-  LLDB_SCOPED_TIMER();
-
-
   bool repl = m_options.GetREPLEnabled();
   bool playground = m_options.GetPlaygroundTransformEnabled();
   // If we are using the playground, hand import the necessary
@@ -1739,8 +1734,6 @@ SwiftExpressionParser::Parse(DiagnosticManager &diagnostic_manager,
   SwiftExpressionParser::SILVariableMap variable_map;
   using ParseResult = SwiftExpressionParser::ParseResult;
   Log *log = GetLog(LLDBLog::Expressions);
-  LLDB_SCOPED_TIMER();
-
   // Get a scoped diagnostics consumer for all diagnostics produced by
   // this expression.
   auto expr_diagnostics = m_swift_ast_ctx.getScopedDiagnosticConsumer();
@@ -2220,7 +2213,6 @@ SwiftExpressionParser::Parse(DiagnosticManager &diagnostic_manager,
 static bool FindFunctionInModule(ConstString &mangled_name,
                                  llvm::Module *module, const char *orig_name,
                                  bool exact) {
-  LLDB_SCOPED_TIMER();
   swift::Demangle::Context demangle_ctx;
   for (llvm::Module::iterator fi = module->getFunctionList().begin(),
                               fe = module->getFunctionList().end();
@@ -2274,7 +2266,6 @@ Status SwiftExpressionParser::DoPrepareForExecution(
     lldb::addr_t &func_addr, lldb::addr_t &func_end,
     lldb::IRExecutionUnitSP &execution_unit_sp, ExecutionContext &exe_ctx,
     bool &can_interpret, ExecutionPolicy execution_policy) {
-  LLDB_SCOPED_TIMER();
   Status err;
   Log *log = GetLog(LLDBLog::Expressions);
 
@@ -2332,7 +2323,6 @@ Status SwiftExpressionParser::DoPrepareForExecution(
 
 bool SwiftExpressionParser::RewriteExpression(
     DiagnosticManager &diagnostic_manager) {
-  LLDB_SCOPED_TIMER();
   // There isn't a Swift equivalent to clang::Rewriter, so we'll just
   // use that.
   Log *log = GetLog(LLDBLog::Expressions);

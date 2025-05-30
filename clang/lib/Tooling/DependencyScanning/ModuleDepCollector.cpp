@@ -46,6 +46,13 @@ const std::vector<std::string> &ModuleDeps::getBuildArguments() const {
   return std::get<std::vector<std::string>>(BuildInfo);
 }
 
+
+CowCompilerInvocation ModuleDeps::getUnderlyingCompilerInvocation() const {
+  assert(std::holds_alternative<CowCompilerInvocation>(BuildInfo) &&
+         "ModuleDeps doesn't hold compiler invocation");
+  return *std::get_if<CowCompilerInvocation>(&BuildInfo);
+}
+
 static void
 optimizeHeaderSearchOpts(HeaderSearchOptions &Opts, ASTReader &Reader,
                          const serialization::ModuleFile &MF,
@@ -657,10 +664,11 @@ static void checkCompileCacheKeyMatch(cas::ObjectStore &CAS,
     llvm::report_fatal_error(OldKey.takeError());
   SmallString<256> Err;
   llvm::raw_svector_ostream OS(Err);
-  OS << "Compile cache key for module changed; previously:";
+  OS << "Compile cache key for module changed; previously: "
+     << OldKey->toString() << ": ";
   if (auto E = printCompileJobCacheKey(CAS, *OldKey, OS))
     OS << std::move(E);
-  OS << "\nkey is now:";
+  OS << "\nkey is now: " << NewKey.toString() << ": ";
   if (auto E = printCompileJobCacheKey(CAS, NewKey, OS))
     OS << std::move(E);
   llvm::report_fatal_error(OS.str());

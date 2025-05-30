@@ -1971,20 +1971,20 @@ defm experimental_bounds_safety_attributes : BoolFOption<
   PosFlag<SetTrue, [], [ClangOption], "Enable">,
   NegFlag<SetFalse, [], [ClangOption], "Disable">,
   BothFlags<[], [ClangOption, CC1Option], " experimental attributes">>;
-defm bounds_attributes_cxx_experimental : BoolFOption<
-  "bounds-attributes-cxx-experimental",
-  LangOpts<"BoundsAttributesCXXExperimental">, DefaultFalse,
-  PosFlag<SetTrue, [], [ClangOption], "Enable">,
-  NegFlag<SetFalse, [], [ClangOption], "Disable">,
-  BothFlags<[], [ClangOption, CC1Option],
-          " experimental bounds attributes for C++">>;
-defm bounds_attributes_objc_experimental : BoolFOption<
-  "bounds-attributes-objc-experimental",
-  LangOpts<"BoundsAttributesObjCExperimental">, DefaultFalse,
-  PosFlag<SetTrue, [], [ClangOption], "Enable">,
-  NegFlag<SetFalse, [], [ClangOption], "Disable">,
-  BothFlags<[], [ClangOption, CC1Option],
-          " experimental bounds attributes for ObjC">>;
+defm bounds_safety_cxx_experimental : BoolFOption<
+  "experimental-bounds-safety-cxx",
+  LangOpts<"BoundsSafetyCXXExperimental">, DefaultFalse,
+  PosFlag<SetTrue, [], [CC1Option], "Enable">,
+  NegFlag<SetFalse, [], [CC1Option], "Disable">,
+  BothFlags<[], [CC1Option],
+          " experimental support for -fbounds-safety for C++">>;
+defm bounds_safety_objc_experimental : BoolFOption<
+  "experimental-bounds-safety-objc",
+  LangOpts<"BoundsSafetyObjCExperimental">, DefaultFalse,
+  PosFlag<SetTrue, [], [CC1Option], "Enable">,
+  NegFlag<SetFalse, [], [CC1Option], "Disable">,
+  BothFlags<[], [CC1Option],
+          " experimental support for -fbounds-safety for ObjC">>;
 defm bounds_safety_relaxed_system_headers : BoolFOption<
   "bounds-safety-relaxed-system-headers",
   LangOpts<"BoundsSafetyRelaxedSystemHeaders">, DefaultTrue,
@@ -8221,6 +8221,11 @@ def objc_isystem : Separate<["-"], "objc-isystem">,
 def objcxx_isystem : Separate<["-"], "objcxx-isystem">,
   MetaVarName<"<directory>">,
   HelpText<"Add directory to the ObjC++ SYSTEM include search path">;
+def internal_iframework : Separate<["-"], "internal-iframework">,
+  MetaVarName<"<directory>">,
+  HelpText<"Add directory to the internal system framework search path; these "
+           "are assumed to not be user-provided and are used to model system "
+           "and standard frameworks' paths.">;
 def internal_isystem : Separate<["-"], "internal-isystem">,
   MetaVarName<"<directory>">,
   HelpText<"Add directory to the internal system include search path; these "

@@ -30,7 +30,9 @@
 #include "llvm/Option/OptTable.h"
 #include "llvm/Option/Option.h"
 #include "llvm/Support/Base64.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Errno.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/Path.h"
@@ -438,16 +440,6 @@ void ProgressEventThreadFunction(DAP &dap) {
   }
 }
 
-static llvm::StringRef GetModuleEventReason(uint32_t event_mask) {
-  if (event_mask & lldb::SBTarget::eBroadcastBitModulesLoaded)
-    return "new";
-  if (event_mask & lldb::SBTarget::eBroadcastBitModulesUnloaded)
-    return "removed";
-  assert(event_mask & lldb::SBTarget::eBroadcastBitSymbolsLoaded ||
-         event_mask & lldb::SBTarget::eBroadcastBitSymbolsChanged);
-  return "changed";
-}
-
 // All events from the debugger, target, process, thread and frames are
 // received in this function that runs in its own thread. We are using a
 // "FILE *" to output packets back to VS Code and they have mutexes in them
@@ -534,18 +526,36 @@ void EventThreadFunction(DAP &dap) {
             event_mask & lldb::SBTarget::eBroadcastBitModulesUnloaded ||
             event_mask & lldb::SBTarget::eBroadcastBitSymbolsLoaded ||
             event_mask & lldb::SBTarget::eBroadcastBitSymbolsChanged) {
-          llvm::StringRef reason = GetModuleEventReason(event_mask);
           const uint32_t num_modules =
               lldb::SBTarget::GetNumModulesFromEvent(event);
+          std::lock_guard<std::mutex> guard(dap.modules_mutex);
           for (uint32_t i = 0; i < num_modules; ++i) {
             lldb::SBModule module =
                 lldb::SBTarget::GetModuleAtIndexFromEvent(i, event);
             if (!module.IsValid())
               continue;
+            llvm::StringRef module_id = module.GetUUIDString();
+            if (module_id.empty())
+              continue;
+
+            llvm::StringRef reason;
+            bool id_only = false;
+            if (dap.modules.contains(module_id)) {
+              if (event_mask & lldb::SBTarget::eBroadcastBitModulesUnloaded) {
+                dap.modules.erase(module_id);
+                reason = "removed";
+                id_only = true;
+              } else {
+                reason = "changed";
+              }
+            } else {
+              dap.modules.insert(module_id);
+              reason = "new";
+            }
 
             llvm::json::Object body;
             body.try_emplace("reason", reason);
-            body.try_emplace("module", CreateModule(dap.target, module));
+            body.try_emplace("module", CreateModule(dap.target, module, id_only));
             llvm::json::Object module_event = CreateEventObject("module");
             module_event.try_emplace("body", std::move(body));
             dap.SendJSON(llvm::json::Value(std::move(module_event)));
@@ -1999,9 +2009,20 @@ void request_modules(DAP &dap, const llvm::json::Object &request) {
   FillResponse(request, response);
 
   llvm::json::Array modules;
-  for (size_t i = 0; i < dap.target.GetNumModules(); i++) {
-    lldb::SBModule module = dap.target.GetModuleAtIndex(i);
-    modules.emplace_back(CreateModule(dap.target, module));
+
+  {
+    std::lock_guard<std::mutex> guard(dap.modules_mutex);
+    for (size_t i = 0; i < dap.target.GetNumModules(); i++) {
+      lldb::SBModule module = dap.target.GetModuleAtIndex(i);
+      if (!module.IsValid())
+        continue;
+
+      llvm::StringRef module_id = module.GetUUIDString();
+      if (!module_id.empty())
+        dap.modules.insert(module_id);
+
+      modules.emplace_back(CreateModule(dap.target, module));
+    }
   }
 
   llvm::json::Object body;
@@ -5140,6 +5161,12 @@ EXAMPLES:
   llvm::outs() << examples;
 }
 
+static void PrintVersion() {
+  llvm::outs() << "lldb-dap: ";
+  llvm::cl::PrintVersionMessage();
+  llvm::outs() << "liblldb: " << lldb::SBDebugger::GetVersionString() << '\n';
+}
+
 // If --launch-target is provided, this instance of lldb-dap becomes a
 // runInTerminal launcher. It will ultimately launch the program specified in
 // the --launch-target argument, which is the original program the user wanted
@@ -5243,6 +5270,11 @@ int main(int argc, char *argv[]) {
 
   if (input_args.hasArg(OPT_help)) {
     printHelp(T, llvm::sys::path::filename(argv[0]));
+    return EXIT_SUCCESS;
+  }
+
+  if (input_args.hasArg(OPT_version)) {
+    PrintVersion();
     return EXIT_SUCCESS;
   }
 

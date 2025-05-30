@@ -3043,7 +3043,6 @@ bool Target::RunStopHooks(bool at_initial_stop) {
   if (m_stop_hooks.empty())
     return false;
 
-
   bool no_active_hooks =
       llvm::none_of(m_stop_hooks, [at_initial_stop](auto &p) {
         bool should_run_now =

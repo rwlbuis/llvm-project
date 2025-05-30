@@ -182,7 +182,7 @@ public:
 
 protected:
   // Constructors and destructors
-  SwiftASTContext(std::string description,
+  SwiftASTContext(std::string description, lldb::ModuleSP module_sp,
                   TypeSystemSwiftTypeRefSP typeref_typesystem);
 
 public:
@@ -209,13 +209,6 @@ public:
   CreateInstance(const SymbolContext &sc,
                  TypeSystemSwiftTypeRef &typeref_typesystem,
                  const char *extra_options = nullptr);
-
-  /// Returns true if the given flag is present in the given compile unit.
-  static bool CheckFlagInCU(CompileUnit *cu, const char *flag);
-
-  static bool ShouldEnableCXXInterop(CompileUnit *cu);
-
-  static bool ShouldEnableEmbeddedSwift(CompileUnit *cu);
 
   static void EnumerateSupportedLanguages(
       std::set<lldb::LanguageType> &languages_for_types,
@@ -271,6 +264,8 @@ public:
 
   ThreadSafeASTContext GetASTContext();
 
+  ThreadSafeASTContext GetASTContext() const;
+
   swift::IRGenDebugInfoLevel GetGenerateDebugInfo();
 
   static swift::PrintOptions
@@ -312,8 +307,6 @@ public:
   void SetPlatformSDKPath(llvm::StringRef path) {
     m_platform_sdk_path = path.str();
   }
-
-  const swift::SearchPathOptions *GetSearchPathOptions() const;
 
   /// \return the ExtraArgs of the ClangImporterOptions.
   const std::vector<std::string> &GetClangArguments();
@@ -412,7 +405,6 @@ public:
   std::string GetSwiftName(const clang::Decl *clang_decl,
                            TypeSystemClang &clang_typesystem) override;
 
-  CompilerType GetBuiltinRawPointerType() override;
   CompilerType GetBuiltinIntType();
 
   /// Attempts to convert a Clang type into a Swift type.
@@ -490,15 +482,12 @@ public:
   void RaiseFatalError(std::string msg) const { m_fatal_errors = Status(msg); }
   static bool HasFatalErrors(swift::ASTContext *ast_context);
   bool HasFatalErrors() const {
-    return m_fatal_errors.Fail() || HasFatalErrors(m_ast_context_ap.get());
+    return m_logged_fatal_error || m_fatal_errors.Fail() ||
+           HasFatalErrors(m_ast_context_ap.get());
   }
 
   /// Return only fatal errors.
   Status GetFatalErrors() const;
-  /// Notify the Process about any Swift or ClangImporter errors.
-  void DiagnoseWarnings(Process &process,
-                        const SymbolContext &sc) const override;
-
   void PrintDiagnostics(DiagnosticManager &diagnostic_manager,
                         uint32_t bufferID = UINT32_MAX, uint32_t first_line = 0,
                         uint32_t last_line = UINT32_MAX) const;
@@ -892,8 +881,6 @@ protected:
   /// Called by the VALID_OR_RETURN macro to log all errors.
   void LogFatalErrors() const;
   Status GetAllDiagnostics() const;
-  /// Stream all diagnostics to the Debugger and clear them.
-  void StreamAllDiagnostics(std::optional<lldb::user_id_t> debugger_id) const;
 
   llvm::TargetOptions *getTargetOptions();
 
@@ -924,6 +911,20 @@ protected:
 
   CompilerType GetAsClangType(ConstString mangled_name);
 
+  /// Retrieve the stored properties for the given nominal type declaration.
+  llvm::ArrayRef<swift::VarDecl *>
+  GetStoredProperties(swift::NominalTypeDecl *nominal);
+
+  SwiftEnumDescriptor *GetCachedEnumInfo(lldb::opaque_compiler_type_t type);
+
+  friend class CompilerType;
+
+  void ApplyDiagnosticOptions();
+
+  /// Apply a PathMappingList dictionary on all search paths in the
+  /// ClangImporterOptions.
+  void RemapClangImporterOptions(const PathMappingList &path_map);
+
   /// Data members.
   /// @{
   std::weak_ptr<TypeSystemSwiftTypeRef> m_typeref_typesystem;
@@ -939,7 +940,6 @@ protected:
   std::unique_ptr<swift::irgen::IRGenModule> m_ir_gen_module_ap;
   llvm::once_flag m_ir_gen_module_once;
   mutable std::once_flag m_swift_import_warning;
-  mutable std::once_flag m_swift_diags_streamed;
   mutable std::once_flag m_swift_warning_streamed;
   std::unique_ptr<swift::DiagnosticConsumer> m_diagnostic_consumer_ap;
   std::unique_ptr<swift::DependencyTracker> m_dependency_tracker;
@@ -994,8 +994,6 @@ protected:
   typedef ThreadSafeDenseSet<const char *> SwiftMangledNameSet;
   SwiftMangledNameSet m_negative_type_cache;
 
-  /// @}
-
   /// Record the set of stored properties for each nominal type declaration
   /// for which we've asked this question.
   ///
@@ -1005,19 +1003,7 @@ protected:
   llvm::DenseMap<swift::NominalTypeDecl *, std::vector<swift::VarDecl *>>
       m_stored_properties;
 
-  /// Retrieve the stored properties for the given nominal type declaration.
-  llvm::ArrayRef<swift::VarDecl *>
-  GetStoredProperties(swift::NominalTypeDecl *nominal);
-
-  SwiftEnumDescriptor *GetCachedEnumInfo(lldb::opaque_compiler_type_t type);
-
-  friend class CompilerType;
-
-  void ApplyDiagnosticOptions();
-
-  /// Apply a PathMappingList dictionary on all search paths in the
-  /// ClangImporterOptions.
-  void RemapClangImporterOptions(const PathMappingList &path_map);
+  /// @}
 };
 
 /// Deprecated.
@@ -1034,9 +1020,9 @@ public:
   static bool classof(const TypeSystem *ts) { return ts->isA(&ID); }
   /// \}
 
-  SwiftASTContextForModule(std::string description,
+  SwiftASTContextForModule(std::string description, lldb::ModuleSP module_sp,
                            TypeSystemSwiftTypeRefSP typeref_typesystem)
-      : SwiftASTContext(description, typeref_typesystem) {}
+      : SwiftASTContext(description, module_sp, typeref_typesystem) {}
   virtual ~SwiftASTContextForModule();
 };
 
@@ -1054,6 +1040,7 @@ public:
   /// \}
 
   SwiftASTContextForExpressions(std::string description,
+                                lldb::ModuleSP module_sp,
                                 TypeSystemSwiftTypeRefSP typeref_typesystem);
   virtual ~SwiftASTContextForExpressions();
 

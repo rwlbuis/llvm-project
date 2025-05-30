@@ -127,6 +127,11 @@ public:
 
   const std::string &GetDescription() const { return m_description; }
   static LanguageSet GetSupportedLanguagesForTypes();
+  /// Returns true if the given flag is present in the given compile unit.
+  static bool CheckFlagInCU(CompileUnit *cu, const char *flag);
+  static bool ShouldEnableCXXInterop(CompileUnit *cu);
+  static bool ShouldEnableEmbeddedSwift(CompileUnit *cu);
+
   virtual SwiftASTContextSP
   GetSwiftASTContext(const SymbolContext &sc) const = 0;
   virtual TypeSystemSwiftTypeRefSP GetTypeSystemSwiftTypeRef() = 0;
@@ -197,7 +202,8 @@ public:
   virtual std::string GetSwiftName(const clang::Decl *clang_decl,
                                    TypeSystemClang &clang_typesystem) = 0;
 
-  virtual CompilerType GetBuiltinRawPointerType() = 0;
+  CompilerType GetBuiltinRawPointerType();
+  CompilerType GetBuiltinUnknownObjectType();
 
   /// Attempts to convert a Clang type into a Swift type.
   /// For example, int is converted to Int32.

@@ -145,8 +145,6 @@ static bool makeStringGutsSummary(
     const TypeSummaryOptions &summary_options,
     StringPrinter::ReadStringAndDumpToStreamOptions read_options,
     std::optional<StringSlice> slice = std::nullopt) {
-  LLDB_SCOPED_TIMER();
-
   static ConstString g__object("_object");
   static ConstString g__storage("_storage");
   static ConstString g__value("_value");
@@ -518,8 +516,6 @@ bool lldb_private::formatters::swift::StaticString_SummaryProvider(
     ValueObject &valobj, Stream &stream,
     const TypeSummaryOptions &summary_options,
     StringPrinter::ReadStringAndDumpToStreamOptions read_options) {
-  LLDB_SCOPED_TIMER();
-
   static ConstString g__startPtrOrData("_startPtrOrData");
   static ConstString g__byteSize("_utf8CodeUnitCount");
   static ConstString g__flags("_flags");
@@ -574,7 +570,6 @@ bool lldb_private::formatters::swift::SwiftSharedString_SummaryProvider_2(
     ValueObject &valobj, Stream &stream,
     const TypeSummaryOptions &summary_options,
     StringPrinter::ReadStringAndDumpToStreamOptions read_options) {
-  LLDB_SCOPED_TIMER();
   ProcessSP process(valobj.GetProcessSP());
   if (!process)
     return false;
@@ -603,7 +598,6 @@ bool lldb_private::formatters::swift::SwiftSharedString_SummaryProvider_2(
 
 bool lldb_private::formatters::swift::SwiftStringStorage_SummaryProvider(
     ValueObject &valobj, Stream &stream, const TypeSummaryOptions &options) {
-  LLDB_SCOPED_TIMER();
   ProcessSP process(valobj.GetProcessSP());
   if (!process)
     return false;
@@ -675,7 +669,6 @@ bool lldb_private::formatters::swift::DarwinBoolean_SummaryProvider(
 static bool RangeFamily_SummaryProvider(ValueObject &valobj, Stream &stream,
                                         const TypeSummaryOptions &options,
                                         bool isHalfOpen) {
-  LLDB_SCOPED_TIMER();
   static ConstString g_lowerBound("lowerBound");
   static ConstString g_upperBound("upperBound");
 
@@ -1143,8 +1136,10 @@ public:
           m_task_sp = ValueObject::CreateValueObjectFromAddress(
               "task", task_addr, m_backend.GetExecutionContextRef(),
               m_task_type, false);
-    if (auto synthetic_sp = m_task_sp->GetSyntheticValue())
-      m_task_sp = synthetic_sp;
+
+    if (m_task_sp)
+      if (auto synthetic_sp = m_task_sp->GetSyntheticValue())
+        m_task_sp = synthetic_sp;
     return ChildCacheState::eRefetch;
   }
 
@@ -1610,7 +1605,6 @@ lldb_private::formatters::swift::ActorSyntheticFrontEndCreator(
 
 bool lldb_private::formatters::swift::ObjC_Selector_SummaryProvider(
     ValueObject &valobj, Stream &stream, const TypeSummaryOptions &options) {
-  LLDB_SCOPED_TIMER();
   static ConstString g_ptr("ptr");
   static ConstString g__rawValue("_rawValue");
 
@@ -1757,7 +1751,6 @@ bool PrintTypePreservingNSNumber(DataBufferSP buffer_sp, ProcessSP process_sp,
 
 bool lldb_private::formatters::swift::TypePreservingNSNumber_SummaryProvider(
     ValueObject &valobj, Stream &stream, const TypeSummaryOptions &options) {
-  LLDB_SCOPED_TIMER();
   lldb::addr_t ptr_value(valobj.GetValueAsUnsigned(LLDB_INVALID_ADDRESS));
   if (ptr_value == LLDB_INVALID_ADDRESS)
     return false;
@@ -1868,6 +1861,18 @@ bool lldb_private::formatters::swift::Task_SummaryProvider(
         return synthetic_sp->GetValueAsUnsigned(0);
     return 0;
   };
+
+  addr_t task_addr = get_member("address");
+  if (auto process_sp = valobj.GetProcessSP()) {
+    if (auto name_or_err = GetTaskName(task_addr, *process_sp)) {
+      if (auto maybe_name = *name_or_err)
+        stream.Format("\"{0}\" ", *maybe_name);
+    } else {
+      LLDB_LOG_ERROR(GetLog(LLDBLog::DataFormatters | LLDBLog::Types),
+                     name_or_err.takeError(),
+                     "failed to determine name of task {1:x}: {0}", task_addr);
+    }
+  }
 
   stream.Format("id:{0}", get_member("id"));
 
@@ -2040,8 +2045,6 @@ void PrintMatrix(Stream &stream,
 
 bool lldb_private::formatters::swift::SIMDVector_SummaryProvider(
     ValueObject &valobj, Stream &stream, const TypeSummaryOptions &options) {
-  LLDB_SCOPED_TIMER();
-
   // SIMD vector contains an inner member `_storage` which is an opaque
   // container. Given SIMD is always in the form SIMDX<Type> where X is a
   // positive integer, we can calculate the number of elements and the
@@ -2115,8 +2118,6 @@ bool lldb_private::formatters::swift::SIMDVector_SummaryProvider(
 
 bool lldb_private::formatters::swift::LegacySIMD_SummaryProvider(
     ValueObject &valobj, Stream &stream, const TypeSummaryOptions &options) {
-  LLDB_SCOPED_TIMER();
-
   Status error;
   ProcessSP process_sp(valobj.GetProcessSP());
   if (!process_sp)
@@ -2201,8 +2202,6 @@ bool lldb_private::formatters::swift::LegacySIMD_SummaryProvider(
 
 bool lldb_private::formatters::swift::GLKit_SummaryProvider(
     ValueObject &valobj, Stream &stream, const TypeSummaryOptions &options) {
-  LLDB_SCOPED_TIMER();
-
   // Get the type name without the "GLKit." prefix.
   ConstString full_type_name = valobj.GetTypeName();
   llvm::StringRef type_name = full_type_name.GetStringRef();

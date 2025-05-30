@@ -689,27 +689,31 @@ static AvailabilityResult CheckAvailability(ASTContext &Context,
   if (!A->getIntroduced().empty() &&
       EnclosingVersion < A->getIntroduced()) {
     IdentifierInfo *IIEnv = A->getEnvironment();
-    StringRef TargetEnv =
-        Context.getTargetInfo().getTriple().getEnvironmentName();
-    StringRef EnvName = llvm::Triple::getEnvironmentTypeName(
-        Context.getTargetInfo().getTriple().getEnvironment());
-    // Matching environment or no environment on attribute
-    if (!IIEnv || (!TargetEnv.empty() && IIEnv->getName() == TargetEnv)) {
+    auto &Triple = Context.getTargetInfo().getTriple();
+    StringRef TargetEnv = Triple.getEnvironmentName();
+    StringRef EnvName =
+        llvm::Triple::getEnvironmentTypeName(Triple.getEnvironment());
+    // Matching environment or no environment on attribute.
+    if (!IIEnv || (Triple.hasEnvironment() && IIEnv->getName() == TargetEnv)) {
       if (Message) {
         Message->clear();
         llvm::raw_string_ostream Out(*Message);
         VersionTuple VTI(A->getIntroduced());
-        Out << "introduced in " << PrettyPlatformName << " " << VTI << " "
-            << EnvName << HintMessage;
+        Out << "introduced in " << PrettyPlatformName << " " << VTI;
+        if (Triple.hasEnvironment())
+          Out << " " << EnvName;
+        Out << HintMessage;
       }
     }
-    // Non-matching environment or no environment on target
+    // Non-matching environment or no environment on target.
     else {
       if (Message) {
         Message->clear();
         llvm::raw_string_ostream Out(*Message);
-        Out << "not available on " << PrettyPlatformName << " " << EnvName
-            << HintMessage;
+        Out << "not available on " << PrettyPlatformName;
+        if (Triple.hasEnvironment())
+          Out << " " << EnvName;
+        Out << HintMessage;
       }
     }
 
@@ -840,7 +844,7 @@ bool Decl::canBeWeakImported(bool &IsDefinition) const {
   return false;
 }
 
-bool Decl::isWeakImported() const {
+bool Decl::isWeakImported(VersionTuple EnclosingVersion) const {
   bool IsDefinition;
   if (!canBeWeakImported(IsDefinition))
     return false;
@@ -851,7 +855,7 @@ bool Decl::isWeakImported() const {
 
     if (const auto *Availability = dyn_cast<AvailabilityAttr>(A)) {
       if (CheckAvailability(getASTContext(), Availability, nullptr,
-                            VersionTuple()) == AR_NotYetIntroduced)
+                            EnclosingVersion) == AR_NotYetIntroduced)
         return true;
     } else if (const auto *DA = dyn_cast<DomainAvailabilityAttr>(A)) {
       auto DomainName = DA->getDomain();

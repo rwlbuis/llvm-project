@@ -387,12 +387,13 @@ CompilerType TypeSystemSwiftTypeRef::GetTypeFromTypeMetadataNode(
   return RemangleAsType(dem, type, flavor);
 }
 
-TypeSP TypeSystemSwiftTypeRef::LookupClangType(StringRef name_ref) {
+TypeSP TypeSystemSwiftTypeRef::LookupClangType(StringRef name_ref,
+                                               SymbolContext sc) {
   llvm::SmallVector<CompilerContext, 2> decl_context;
   // Make up a decl context for non-nested types.
   decl_context.push_back({CompilerContextKind::AnyModule, ConstString()});
   decl_context.push_back({CompilerContextKind::AnyType, ConstString(name_ref)});
-  return LookupClangType(name_ref, decl_context);
+  return LookupClangType(name_ref, decl_context, sc);
 }
 
 /// Look up one Clang type in a module.
@@ -408,8 +409,11 @@ static TypeSP LookupClangType(Module &m,
 
 TypeSP TypeSystemSwiftTypeRef::LookupClangType(
     StringRef name_ref, llvm::ArrayRef<CompilerContext> decl_context,
-    ExecutionContext *exe_ctx) {
-  Module *m = GetModule();
+    SymbolContext sc) {
+
+  Module *m = sc.module_sp.get();
+  if (!m)
+    m = GetModule();
   if (!m)
     return {};
   return ::LookupClangType(const_cast<Module &>(*m), decl_context);
@@ -417,23 +421,14 @@ TypeSP TypeSystemSwiftTypeRef::LookupClangType(
 
 TypeSP TypeSystemSwiftTypeRefForExpressions::LookupClangType(
     StringRef name_ref, llvm::ArrayRef<CompilerContext> decl_context,
-    ExecutionContext *exe_ctx) {
+    SymbolContext sc) {
   // Check the cache first. Negative results are also cached.
   TypeSP result;
   ConstString name(name_ref);
   if (m_clang_type_cache.Lookup(name.AsCString(), result))
     return result;
 
-  TargetSP target_sp = GetTargetWP().lock();
-  if (!target_sp)
-    return {};
-
-  ModuleSP cur_module;
-  if (exe_ctx)
-    if (StackFrame *frame = exe_ctx->GetFramePtr())
-      cur_module =
-          frame->GetSymbolContext(lldb::eSymbolContextModule).module_sp;
-
+  ModuleSP cur_module = sc.module_sp;
   auto lookup = [&](const ModuleSP &m) -> bool {
     // Already visited this.
     if (m == cur_module)
@@ -453,7 +448,9 @@ TypeSP TypeSystemSwiftTypeRefForExpressions::LookupClangType(
     if (!lookup(cur_module))
       return result;
 
-  target_sp->GetImages().ForEach(lookup);
+  if (TargetSP target_sp = GetTargetWP().lock())
+    target_sp->GetImages().ForEach(lookup);
+
   return result;
 }
 
@@ -974,8 +971,6 @@ TypeSystemSwiftTypeRef::ResolveTypeAlias(swift::Demangle::Demangler &dem,
                                          swift::Demangle::NodePointer node,
                                          swift::Mangle::ManglingFlavor flavor,
                                          bool prefer_clang_types) {
-  LLDB_SCOPED_TIMER();
-
   // Hardcode that the Swift.AnyObject type alias always resolves to
   // the builtin AnyObject type.
   if (IsAnyObjectTypeAlias(node))
@@ -1153,6 +1148,42 @@ swift::Demangle::NodePointer TypeSystemSwiftTypeRef::Transform(
   return fn(node);
 }
 
+llvm::Expected<swift::Demangle::NodePointer>
+TypeSystemSwiftTypeRef::TryTransform(
+    swift::Demangle::Demangler &dem, swift::Demangle::NodePointer node,
+    std::function<llvm::Expected<swift::Demangle::NodePointer>(
+        swift::Demangle::NodePointer)>
+        fn) {
+  if (!node)
+    return node;
+  using namespace swift::Demangle;
+  llvm::SmallVector<NodePointer, 2> children;
+  bool changed = false;
+  for (NodePointer child : *node) {
+    llvm::Expected<NodePointer> transformed_or_err = TryTransform(dem, child, fn);
+    if (!transformed_or_err)
+      return transformed_or_err.takeError();
+    NodePointer transformed = *transformed_or_err;
+    changed |= (child != transformed);
+    assert(transformed && "callback returned a nullptr");
+    if (transformed)
+      children.push_back(transformed);
+  }
+  if (changed) {
+    // Create a new node with the transformed children.
+    auto kind = node->getKind();
+    if (node->hasText())
+      node = dem.createNodeWithAllocatedText(kind, node->getText());
+    else if (node->hasIndex())
+      node = dem.createNode(kind, node->getIndex());
+    else
+      node = dem.createNode(kind);
+    for (NodePointer transformed_child : children)
+      node->addChild(transformed_child, dem);
+  }
+  return fn(node);
+}
+
 void TypeSystemSwiftTypeRef::PreOrderTraversal(
     swift::Demangle::NodePointer node,
     std::function<bool(swift::Demangle::NodePointer)> visitor) {
@@ -1170,8 +1201,6 @@ static swift::Demangle::NodePointer
 Desugar(swift::Demangle::Demangler &dem, swift::Demangle::NodePointer node,
         swift::Demangle::Node::Kind bound_kind,
         swift::Demangle::Node::Kind kind, llvm::StringRef name) {
-  LLDB_SCOPED_TIMER();
-
   using namespace swift::Demangle;
   NodePointer desugared = dem.createNode(bound_kind);
   NodePointer type = dem.createNode(Node::Kind::Type);
@@ -1400,7 +1429,6 @@ std::string ExtractSwiftName(
 std::string
 TypeSystemSwiftTypeRef::GetSwiftName(const clang::Decl *clang_decl,
                                      TypeSystemClang &clang_typesystem) {
-  LLDB_SCOPED_TIMER();
   auto *named_decl = llvm::dyn_cast_or_null<const clang::NamedDecl>(clang_decl);
   if (!named_decl)
     return {};
@@ -1445,11 +1473,6 @@ TypeSystemSwiftTypeRef::GetSwiftName(const clang::Decl *clang_decl,
   return {};
 }
 
-CompilerType TypeSystemSwiftTypeRef::GetBuiltinRawPointerType() {
-  return GetTypeFromMangledTypename(ConstString("$sBpD"));
-}
-
-
 static bool IsImportedType(swift::Demangle::NodePointer node) {
   if (!node)
     return false;
@@ -1463,8 +1486,6 @@ static bool IsImportedType(swift::Demangle::NodePointer node) {
 swift::Demangle::NodePointer TypeSystemSwiftTypeRef::GetSwiftified(
     swift::Demangle::Demangler &dem, swift::Demangle::NodePointer node,
     swift::Mangle::ManglingFlavor flavor, bool resolve_objc_module) {
-  LLDB_SCOPED_TIMER();
-
   auto mangling = GetMangledName(dem, node, flavor);
   if (!mangling.isSuccess()) {
     LLDB_LOGF(GetLog(LLDBLog::Types), "Failed while getting swiftified (%d:%u)",
@@ -1635,8 +1656,6 @@ swift::Demangle::NodePointer TypeSystemSwiftTypeRef::GetNodeForPrintingImpl(
 swift::Demangle::NodePointer TypeSystemSwiftTypeRef::GetDemangleTreeForPrinting(
     swift::Demangle::Demangler &dem, const char *mangled_name,
     bool resolve_objc_module) {
-  LLDB_SCOPED_TIMER();
-
   auto flavor = SwiftLanguageRuntime::GetManglingFlavor(mangled_name);
 
   auto *node = dem.demangleSymbol(mangled_name);
@@ -2350,13 +2369,6 @@ Status TypeSystemSwiftTypeRef::IsCompatible() {
   return {};
 }
 
-void TypeSystemSwiftTypeRef::DiagnoseWarnings(Process &process,
-                                              const SymbolContext &sc) const {
-  // This gets called only from Thread::FrameSelectedCallback(StackFrame).
-  if (auto swift_ast_context = GetSwiftASTContextOrNull(sc))
-    swift_ast_context->DiagnoseWarnings(process, sc);
-}
-
 plugin::dwarf::DWARFASTParser *TypeSystemSwiftTypeRef::GetDWARFParser() {
   if (!m_dwarf_ast_parser_up)
     m_dwarf_ast_parser_up.reset(new DWARFASTParserSwift(*this));
@@ -2966,13 +2978,21 @@ bool TypeSystemSwiftTypeRef::IsArrayType(opaque_compiler_type_t type,
         !node->getChild(1)->hasText() ||
         (node->getChild(1)->getText() != "Array" &&
          node->getChild(1)->getText() != "ContiguousArray" &&
+         node->getChild(1)->getText() != "InlineArray" &&
          node->getChild(1)->getText() != "ArraySlice"))
       return false;
 
-    if (elem_node->getNumChildren() != 1 ||
-        elem_node->getKind() != Node::Kind::TypeList)
+    if (elem_node->getKind() != Node::Kind::TypeList)
       return false;
-    elem_node = elem_node->getFirstChild();
+    if (node->getChild(1)->getText() == "InlineArray") {
+      if (elem_node->getNumChildren() != 2)
+        return false;
+      elem_node = elem_node->getChild(1);
+    } else {
+      if (elem_node->getNumChildren() != 1)
+        return false;
+      elem_node = elem_node->getFirstChild();
+    }
     if (element_type)
       // FIXME: This expensive canonicalization is only there for
       // SwiftASTContext compatibility.
@@ -3128,8 +3148,6 @@ bool TypeSystemSwiftTypeRef::IsPossibleDynamicType(opaque_compiler_type_t type,
                                                    CompilerType *target_type,
                                                    bool check_cplusplus,
                                                    bool check_objc) {
-  LLDB_SCOPED_TIMER();
-
   if (target_type)
     target_type->Clear();
 
@@ -3276,7 +3294,6 @@ ConstString TypeSystemSwiftTypeRef::GetTypeName(opaque_compiler_type_t type,
 ConstString
 TypeSystemSwiftTypeRef::GetDisplayTypeName(opaque_compiler_type_t type,
                                            const SymbolContext *sc) {
-  LLDB_SCOPED_TIMER();
   auto impl = [&]() {
     using namespace swift::Demangle;
     auto flavor = SwiftLanguageRuntime::GetManglingFlavor(AsMangledName(type));
@@ -3522,7 +3539,6 @@ CompilerType TypeSystemSwiftTypeRef::GetVoidFunctionType() {
 llvm::Expected<uint64_t>
 TypeSystemSwiftTypeRef::GetBitSize(opaque_compiler_type_t type,
                                    ExecutionContextScope *exe_scope) {
-  LLDB_SCOPED_TIMER();
   auto impl = [&]() -> llvm::Expected<uint64_t> {
     auto get_static_size = [&](bool cached_only) -> std::optional<uint64_t> {
       if (IsMeaninglessWithoutDynamicResolution(type))
@@ -3625,7 +3641,6 @@ TypeSystemSwiftTypeRef::GetBitSize(opaque_compiler_type_t type,
 std::optional<uint64_t>
 TypeSystemSwiftTypeRef::GetByteStride(opaque_compiler_type_t type,
                                       ExecutionContextScope *exe_scope) {
-  LLDB_SCOPED_TIMER();
   auto impl = [&]() -> std::optional<uint64_t> {
     if (auto *runtime =
             SwiftLanguageRuntime::Get(exe_scope->CalculateProcess())) {
@@ -3651,7 +3666,6 @@ TypeSystemSwiftTypeRef::GetByteStride(opaque_compiler_type_t type,
 
 lldb::Encoding TypeSystemSwiftTypeRef::GetEncoding(opaque_compiler_type_t type,
                                                    uint64_t &count) {
-  LLDB_SCOPED_TIMER();
   auto impl = [&]() -> lldb::Encoding {
     if (!type)
       return lldb::eEncodingInvalid;
@@ -3734,7 +3748,6 @@ llvm::Expected<uint32_t>
 TypeSystemSwiftTypeRef::GetNumChildren(opaque_compiler_type_t type,
                                        bool omit_empty_base_classes,
                                        const ExecutionContext *exe_ctx) {
-  LLDB_SCOPED_TIMER();
   auto impl = [&]() -> llvm::Expected<uint32_t> {
     if (exe_ctx)
       if (auto *exe_scope = exe_ctx->GetBestExecutionContextScope())
@@ -3781,7 +3794,6 @@ TypeSystemSwiftTypeRef::GetNumChildren(opaque_compiler_type_t type,
 
 uint32_t TypeSystemSwiftTypeRef::GetNumFields(opaque_compiler_type_t type,
                                               ExecutionContext *exe_ctx) {
-  LLDB_SCOPED_TIMER();
   auto impl = [&]() -> std::optional<uint32_t> {
     if (exe_ctx)
       if (auto *runtime = SwiftLanguageRuntime::Get(exe_ctx->GetProcessSP())) {
@@ -3849,7 +3861,6 @@ CompilerType TypeSystemSwiftTypeRef::GetFieldAtIndex(
   // this function would require it to have an execution context being passed
   // in. Given the purpose of TypeSystemSwiftTypeRef, it's unlikely this
   // function will be called much.
-  LLDB_SCOPED_TIMER();
   FORWARD_TO_EXPRAST_ONLY(GetFieldAtIndex,
                           (ReconstructType(type), idx, name, bit_offset_ptr,
                            bitfield_bit_size_ptr, is_bitfield_ptr),
@@ -3897,7 +3908,6 @@ TypeSystemSwiftTypeRef::GetChildCompilerTypeAtIndex(
     uint32_t &child_bitfield_bit_size, uint32_t &child_bitfield_bit_offset,
     bool &child_is_base_class, bool &child_is_deref_of_parent,
     ValueObject *valobj, uint64_t &language_flags) {
-  LLDB_SCOPED_TIMER();
   child_name = "";
   child_byte_size = 0;
   child_byte_offset = 0;
@@ -4170,7 +4180,6 @@ TypeSystemSwiftTypeRef::GetChildCompilerTypeAtIndex(
 size_t TypeSystemSwiftTypeRef::GetIndexOfChildMemberWithName(
     opaque_compiler_type_t type, StringRef name, ExecutionContext *exe_ctx,
     bool omit_empty_base_classes, std::vector<uint32_t> &child_indexes) {
-  LLDB_SCOPED_TIMER();
   if (auto *exe_scope = exe_ctx->GetBestExecutionContextScope())
     if (auto *runtime =
             SwiftLanguageRuntime::Get(exe_scope->CalculateProcess())) {
@@ -4316,7 +4325,6 @@ TypeSystemSwiftTypeRef::ShouldPrintAsOneLiner(opaque_compiler_type_t type,
 
 bool TypeSystemSwiftTypeRef::IsMeaninglessWithoutDynamicResolution(
     opaque_compiler_type_t type) {
-  LLDB_SCOPED_TIMER();
   auto impl = [&]() {
     using namespace swift::Demangle;
     Demangler dem;
@@ -4356,7 +4364,6 @@ TypeSystemSwiftTypeRef::GetAsClangTypeOrNull(lldb::opaque_compiler_type_t type,
 
 bool TypeSystemSwiftTypeRef::IsImportedType(opaque_compiler_type_t type,
                                             CompilerType *original_type) {
-  LLDB_SCOPED_TIMER();
   auto impl = [&]() -> bool {
     using namespace swift::Demangle;
     Demangler dem;
@@ -4769,7 +4776,6 @@ TypeSystemSwiftTypeRef::GetNonTriviallyManagedReferenceKind(
 void TypeSystemSwiftTypeRef::DumpTypeDescription(
     opaque_compiler_type_t type, lldb::DescriptionLevel level,
     ExecutionContextScope *exe_scope) {
-  LLDB_SCOPED_TIMER();
 
   StreamFile s(stdout, false);
   DumpTypeDescription(type, &s, level, exe_scope);
@@ -4778,7 +4784,6 @@ void TypeSystemSwiftTypeRef::DumpTypeDescription(
 void TypeSystemSwiftTypeRef::DumpTypeDescription(
     opaque_compiler_type_t type, Stream &s, lldb::DescriptionLevel level,
     ExecutionContextScope *exe_scope) {
-  LLDB_SCOPED_TIMER();
   DumpTypeDescription(type, &s, false, true, level, exe_scope);
 }
 
@@ -4786,7 +4791,6 @@ void TypeSystemSwiftTypeRef::DumpTypeDescription(
     opaque_compiler_type_t type, bool print_help_if_available,
     bool print_extensions_if_available, lldb::DescriptionLevel level,
     ExecutionContextScope *exe_scope) {
-  LLDB_SCOPED_TIMER();
   StreamFile s(stdout, false);
   DumpTypeDescription(type, &s, print_help_if_available,
                       print_extensions_if_available, level, exe_scope);
@@ -4796,7 +4800,6 @@ void TypeSystemSwiftTypeRef::DumpTypeDescription(
     opaque_compiler_type_t type, Stream *s, bool print_help_if_available,
     bool print_extensions_if_available, lldb::DescriptionLevel level,
     ExecutionContextScope *exe_scope) {
-  LLDB_SCOPED_TIMER();
   // Currently, we need an execution scope so we can access the runtime, which
   // in turn owns the reflection context, which is used to read the typeref. If
   // we were to decouple the reflection context from the runtime, we'd be able
@@ -4838,7 +4841,6 @@ bool TypeSystemSwiftTypeRef::DumpTypeValue(
     size_t data_byte_size, uint32_t bitfield_bit_size,
     uint32_t bitfield_bit_offset, ExecutionContextScope *exe_scope,
     bool is_base_class) {
-  LLDB_SCOPED_TIMER();
   if (!type)
     return false;
   const char *mangled_name = AsMangledName(type);
@@ -5055,7 +5057,6 @@ bool TypeSystemSwiftTypeRef::IsPointerOrReferenceType(
 std::optional<size_t>
 TypeSystemSwiftTypeRef::GetTypeBitAlign(opaque_compiler_type_t type,
                                         ExecutionContextScope *exe_scope) {
-  LLDB_SCOPED_TIMER();
   // This method doesn't use VALIDATE_AND_RETURN because except for
   // fixed-size types the SwiftASTContext implementation forwards to
   // SwiftLanguageRuntime anyway and for many fixed-size types the
@@ -5184,7 +5185,6 @@ bool TypeSystemSwiftTypeRef::IsTypedefType(opaque_compiler_type_t type) {
 
 CompilerType
 TypeSystemSwiftTypeRef::GetTypedefedType(opaque_compiler_type_t type) {
-  LLDB_SCOPED_TIMER();
   auto impl = [&]() -> CompilerType {
     using namespace swift::Demangle;
     Demangler dem;
@@ -5214,7 +5214,6 @@ TypeSystemSwiftTypeRef::GetTypedefedType(opaque_compiler_type_t type) {
 
 CompilerType
 TypeSystemSwiftTypeRef::GetFullyUnqualifiedType(opaque_compiler_type_t type) {
-  LLDB_SCOPED_TIMER();
   auto impl = [&]() -> CompilerType { return {weak_from_this(), type}; };
 
   VALIDATE_AND_RETURN(impl, GetFullyUnqualifiedType, type, g_no_exe_ctx,
@@ -5222,20 +5221,32 @@ TypeSystemSwiftTypeRef::GetFullyUnqualifiedType(opaque_compiler_type_t type) {
 }
 uint32_t
 TypeSystemSwiftTypeRef::GetNumDirectBaseClasses(opaque_compiler_type_t type) {
-  // We forward the call to SwiftASTContext because an implementation of
-  // this function would require it to have an execution context being passed
-  // in. Given the purpose of TypeSystemSwiftTypeRef, it's unlikely this
-  // function will be called much.
-  FORWARD_TO_EXPRAST_ONLY(GetNumDirectBaseClasses, (ReconstructType(type)), {});
+  auto impl = [&]() -> uint32_t {
+    CompilerType class_ty(weak_from_this(), type);
+    if (auto target_sp = GetTargetWP().lock())
+      if (auto *runtime = SwiftLanguageRuntime::Get(target_sp->GetProcessSP()))
+        if (runtime->GetBaseClass(class_ty))
+          return 1;
+    return 0;
+  };
+
+  VALIDATE_AND_RETURN(impl, GetNumDirectBaseClasses, type, g_no_exe_ctx,
+                      (ReconstructType(type)));
 }
 CompilerType TypeSystemSwiftTypeRef::GetDirectBaseClassAtIndex(
     opaque_compiler_type_t type, size_t idx, uint32_t *bit_offset_ptr) {
-  // We forward the call to SwiftASTContext because an implementation of
-  // this function would require it to have an execution context being passed
-  // in. Given the purpose of TypeSystemSwiftTypeRef, it's unlikely this
-  // function will be called much.
-  FORWARD_TO_EXPRAST_ONLY(GetDirectBaseClassAtIndex,
-                          (ReconstructType(type), idx, bit_offset_ptr), {});
+  auto impl = [&]() {
+    if (idx != 0)
+      return CompilerType();
+    CompilerType class_ty(weak_from_this(), type);
+    if (auto target_sp = GetTargetWP().lock())
+      if (auto *runtime = SwiftLanguageRuntime::Get(target_sp->GetProcessSP()))
+        return runtime->GetBaseClass(class_ty);
+    return CompilerType();
+  };
+
+  VALIDATE_AND_RETURN(impl, GetDirectBaseClassAtIndex, type, g_no_exe_ctx,
+                      (ReconstructType(type), idx, nullptr));
 }
 bool TypeSystemSwiftTypeRef::IsReferenceType(opaque_compiler_type_t type,
                                              CompilerType *pointee_type,
@@ -5341,11 +5352,13 @@ TypeSystemSwiftTypeRef::GetDependentGenericParamListForType(
 swift::Mangle::ManglingFlavor
 TypeSystemSwiftTypeRef::GetManglingFlavor(ExecutionContext *exe_ctx) {
   auto sc = GetSymbolContext(exe_ctx);
-  if (auto ast_ctx = GetSwiftASTContext(sc))
-    return ast_ctx->GetManglingFlavor();
-  LLDB_LOG(GetLog(LLDBLog::Types),
-           "GetManglingFlavor failed to acquire a SwiftASTContext");
-  return swift::Mangle::ManglingFlavor::Default;
+  auto *cu = sc.comp_unit;
+  // Cache the result for the last recently used CU.
+  if (cu != m_lru_is_embedded.first)
+    m_lru_is_embedded = {cu, ShouldEnableEmbeddedSwift(sc.comp_unit)
+                                 ? swift::Mangle::ManglingFlavor::Embedded
+                                 : swift::Mangle::ManglingFlavor::Default};
+  return m_lru_is_embedded.second;
 }
 
 #ifndef NDEBUG

@@ -116,8 +116,6 @@ public:
   bool SupportsLanguage(lldb::LanguageType language) override;
   Status IsCompatible() override;
 
-  void DiagnoseWarnings(Process &process,
-                        const SymbolContext &sc) const override;
   plugin::dwarf::DWARFASTParser *GetDWARFParser() override;
   // CompilerDecl functions
   ConstString DeclGetName(void *opaque_decl) override {
@@ -366,6 +364,17 @@ public:
       std::function<swift::Demangle::NodePointer(swift::Demangle::NodePointer)>
           visitor);
 
+  /// Recursively transform the demangle tree starting a \p node by
+  /// doing a post-order traversal and replacing each node with
+  /// fn(node).
+  /// The NodePointer passed to \p fn is guaranteed to be non-null.
+  static llvm::Expected<swift::Demangle::NodePointer>
+  TryTransform(swift::Demangle::Demangler &dem,
+               swift::Demangle::NodePointer node,
+               std::function<llvm::Expected<swift::Demangle::NodePointer>(
+                   swift::Demangle::NodePointer)>
+                   visitor);
+
   /// A left-to-right preorder traversal. Don't visit children if
   /// visitor returns false.
   static void
@@ -412,8 +421,6 @@ public:
   std::string GetSwiftName(const clang::Decl *clang_decl,
                            TypeSystemClang &clang_typesystem) override;
 
-  CompilerType GetBuiltinRawPointerType() override;
-
   /// Wrap \p node as \p Global(TypeMangling(node)), remangle the type
   /// and create a CompilerType from it.
   CompilerType RemangleAsType(swift::Demangle::Demangler &dem,
@@ -423,14 +430,14 @@ public:
   /// Search the debug info for a non-nested Clang type with the specified name
   /// and cache the result. Users should prefer the version that takes in the
   /// decl_context.
-  lldb::TypeSP LookupClangType(llvm::StringRef name_ref);
+  lldb::TypeSP LookupClangType(llvm::StringRef name_ref, SymbolContext sc = {});
 
   /// Search the debug info for a Clang type with the specified name and decl
   /// context.
   virtual lldb::TypeSP
   LookupClangType(llvm::StringRef name_ref,
                   llvm::ArrayRef<CompilerContext> decl_context,
-                  ExecutionContext *exe_ctx = nullptr);
+                  SymbolContext sc = {});
 
   /// Attempts to convert a Clang type into a Swift type.
   /// For example, int is converted to Int32.
@@ -599,6 +606,9 @@ protected:
 
   /// All lldb::Type pointers produced by DWARFASTParser Swift go here.
   ThreadSafeDenseMap<const char *, lldb::TypeSP> m_swift_type_map;
+  /// An LRU cache for \ref GetManglingFlavor().
+  std::pair<CompileUnit *, swift::Mangle::ManglingFlavor> m_lru_is_embedded = {
+      nullptr, swift::Mangle::ManglingFlavor::Default};
 };
 
 /// This one owns a SwiftASTContextForExpressions.
@@ -650,11 +660,9 @@ public:
   unsigned GetGeneration() const { return m_generation; }
   /// Performs a target-wide search.
   /// \param exe_ctx is a hint for where to look first.
-  lldb::TypeSP
-  LookupClangType(llvm::StringRef name_ref,
-                  llvm::ArrayRef<CompilerContext> decl_context,
-                  ExecutionContext *exe_ctx) override;
-
+  lldb::TypeSP LookupClangType(llvm::StringRef name_ref,
+                               llvm::ArrayRef<CompilerContext> decl_context,
+                               SymbolContext sc = {}) override;
 
   friend class SwiftASTContextForExpressions;
 protected:

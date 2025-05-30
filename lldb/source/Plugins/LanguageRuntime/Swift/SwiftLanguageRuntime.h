@@ -19,6 +19,7 @@
 #include "lldb/Breakpoint/BreakpointPrecondition.h"
 #include "lldb/Core/PluginInterface.h"
 #include "lldb/Target/LanguageRuntime.h"
+#include "lldb/Target/Process.h"
 #include "lldb/lldb-private.h"
 #include "swift/Demangling/ManglingFlavor.h"
 
@@ -62,11 +63,14 @@ class SwiftLanguageRuntimeStub;
 class SwiftLanguageRuntimeImpl;
 class ReflectionContextInterface;
 class LLDBMemoryReader;
+class MemoryReaderLocalBufferHolder;
 struct SuperClassType;
 
 using ThreadSafeReflectionContext = LockGuarded<ReflectionContextInterface>;
 
 class SwiftLanguageRuntime : public LanguageRuntime {
+  friend class SwiftRuntimeTypeVisitor;
+
 protected:
   SwiftLanguageRuntime(Process &process);
 
@@ -271,6 +275,9 @@ public:
                                 Address &address, Value::ValueType &value_type,
                                 llvm::ArrayRef<uint8_t> &local_buffer) override;
 
+  llvm::Expected<CompilerType> BindGenericPackType(StackFrame &frame,
+                                                   CompilerType pack_type,
+                                                   bool *indirect = nullptr);
   CompilerType BindGenericTypeParameters(
       CompilerType unbound_type,
       std::function<CompilerType(unsigned, unsigned)> finder);
@@ -292,6 +299,7 @@ public:
   llvm::Error GetObjectDescription(Stream &str, ValueObject &object) override;
   CompilerType GetConcreteType(ExecutionContextScope *exe_scope,
                                ConstString abstract_type_name) override;
+  CompilerType GetBaseClass(CompilerType class_ty);
 
   CompilerType GetTypeFromMetadata(TypeSystemSwift &tss, Address address);
   /// Build the artificial type metadata variable name for \p swift_type.
@@ -341,12 +349,20 @@ public:
     unsigned dependent_generic_param_count = 0;
     unsigned num_counts = 0;
 
-    unsigned GetNumValuePacks() { return count_for_value_pack.size(); }
-    unsigned GetNumTypePacks() { return count_for_type_pack.size(); }
-    unsigned GetCountForValuePack(unsigned i) {
+    unsigned GetNumValuePacks() const { return count_for_value_pack.size(); }
+    unsigned GetNumTypePacks() const { return count_for_type_pack.size(); }
+    unsigned GetCountForValuePack(unsigned i) const {
       return count_for_value_pack[i];
     }
-    unsigned GetCountForTypePack(unsigned i) { return count_for_type_pack[i]; }
+    unsigned GetCountForTypePack(unsigned i) const { return count_for_type_pack[i]; }
+    bool HasPacks() const { return pack_expansions.size(); }
+    bool IsPack(unsigned depth, unsigned index) const {
+      if (HasPacks())
+        for (auto param : generic_params)
+          if (param.depth == depth && param.index == index)
+            return param.is_pack;
+      return false;
+    }
   };
   /// Extract the generic signature out of a mangled Swift function name.
   static std::optional<GenericSignature>
@@ -357,8 +373,8 @@ public:
   /// version of \p base_type that replaces all generic type
   /// parameters with bound generic types. If a generic type parameter
   /// cannot be resolved, the input type is returned.
-  CompilerType BindGenericTypeParameters(StackFrame &stack_frame,
-                                         CompilerType base_type);
+  llvm::Expected<CompilerType>
+  BindGenericTypeParameters(StackFrame &stack_frame, CompilerType base_type);
 
   bool IsStoredInlineInBuffer(CompilerType type) override;
 
@@ -578,13 +594,14 @@ protected:
   GetRemoteASTContext(SwiftASTContext &swift_ast_ctx);
 
   /// Like \p BindGenericTypeParameters but for TypeSystemSwiftTypeRef.
-  CompilerType BindGenericTypeParameters(StackFrame &stack_frame,
-                                         TypeSystemSwiftTypeRef &ts,
-                                         ConstString mangled_name);
+  llvm::Expected<CompilerType>
+  BindGenericTypeParameters(StackFrame &stack_frame, TypeSystemSwiftTypeRef &ts,
+                            ConstString mangled_name);
 
   /// Like \p BindGenericTypeParameters but for RemoteAST.
-  CompilerType BindGenericTypeParametersRemoteAST(StackFrame &stack_frame,
-                                                  CompilerType base_type);
+  llvm::Expected<CompilerType>
+  BindGenericTypeParametersRemoteAST(StackFrame &stack_frame,
+                                     CompilerType base_type);
 
   bool GetDynamicTypeAndAddress_Pack(ValueObject &in_value,
                                      CompilerType pack_type,
@@ -710,9 +727,8 @@ protected:
 
   std::shared_ptr<LLDBMemoryReader> GetMemoryReader();
 
-  void PushLocalBuffer(uint64_t local_buffer, uint64_t local_buffer_size);
-
-  void PopLocalBuffer();
+  MemoryReaderLocalBufferHolder PushLocalBuffer(uint64_t local_buffer,
+                                                uint64_t local_buffer_size);
 
   // These are the helper functions for GetObjectDescription for various
   // types of swift objects.
@@ -887,6 +903,10 @@ GetAsyncUnwindRegisterNumbers(llvm::Triple::ArchType triple);
 /// Inspects thread local storage to find the address of the currently executing
 /// task.
 llvm::Expected<lldb::addr_t> GetTaskAddrFromThreadLocalStorage(Thread &thread);
+
+llvm::Expected<std::optional<std::string>> GetTaskName(lldb::addr_t task,
+                                                       Process &process);
+
 } // namespace lldb_private
 
 #endif // liblldb_SwiftLanguageRuntime_h_

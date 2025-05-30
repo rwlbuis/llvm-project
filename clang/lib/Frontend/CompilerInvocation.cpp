@@ -1559,7 +1559,11 @@ createBaseFS(const FileSystemOptions &FSOpts, const FrontendOptions &FEOpts,
     auto Root = cas::IncludeTreeRoot::get(*CAS, *Ref);
     if (!Root)
       return Root.takeError();
-    return cas::createIncludeTreeFileSystem(*Root);
+    auto FileList = Root->getFileList();
+    if (!FileList)
+      return FileList.takeError();
+
+    return cas::createIncludeTreeFileSystem(*FileList);
   };
   auto makeCASFS = [&](std::shared_ptr<llvm::cas::ObjectStore> CAS,
                        llvm::cas::CASID &ID)
@@ -3505,6 +3509,8 @@ static void GenerateHeaderSearchArgs(const HeaderSearchOptions &Opts,
                            : OPT_internal_externc_isystem;
     GenerateArg(Consumer, Opt, It->Path);
   }
+  for (; It < End && Matches(*It, {frontend::System}, true, true); ++It)
+    GenerateArg(Consumer, OPT_internal_iframework, It->Path);
 
   assert(It == End && "Unhandled HeaderSearchOption::Entry.");
 
@@ -3637,6 +3643,8 @@ static bool ParseHeaderSearchArgs(HeaderSearchOptions &Opts, ArgList &Args,
       Group = frontend::ExternCSystem;
     Opts.AddPath(A->getValue(), Group, false, true);
   }
+  for (const auto *A : Args.filtered(OPT_internal_iframework))
+    Opts.AddPath(A->getValue(), frontend::System, true, true);
 
   // Add the path prefixes which are implicitly treated as being system headers.
   for (const auto *A :
@@ -4429,10 +4437,10 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
       SupportsBoundsSafety = true;
       break;
     case Language::ObjC:
-      SupportsBoundsSafety = Opts.BoundsAttributesObjCExperimental;
+      SupportsBoundsSafety = Opts.BoundsSafetyObjCExperimental;
       break;
     case Language::CXX:
-      SupportsBoundsSafety = Opts.BoundsAttributesCXXExperimental;
+      SupportsBoundsSafety = Opts.BoundsSafetyCXXExperimental;
       break;
     default:
       break;
@@ -4459,11 +4467,11 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
     Opts.ExperimentalLateParseAttributes = 1;
   }
 
-  if (Opts.BoundsAttributesCXXExperimental && !Opts.BoundsSafety)
-    Diags.Report(diag::warn_bounds_attributes_cxx_experimental_ignored);
+  if (Opts.BoundsSafetyCXXExperimental && !Opts.BoundsSafety)
+    Diags.Report(diag::warn_bounds_safety_cxx_experimental_ignored);
 
-  if (Opts.BoundsAttributesObjCExperimental && !Opts.BoundsSafety)
-    Diags.Report(diag::warn_bounds_attributes_objc_experimental_ignored);
+  if (Opts.BoundsSafetyObjCExperimental && !Opts.BoundsSafety)
+    Diags.Report(diag::warn_bounds_safety_objc_experimental_ignored);
 
   if (!Opts.BoundsSafetyRelaxedSystemHeaders && !Opts.BoundsSafety)
     Diags.Report(diag::warn_bounds_safety_relaxed_system_headers_ignored);

@@ -2,7 +2,6 @@
 # CHECK: -g
 # CHECK: --help
 # CHECK: -h
-# CHECK: --port
-# CHECK: -p
+# CHECK: --repl-mode
+# CHECK: --version
 # CHECK: --wait-for-debugger
-
