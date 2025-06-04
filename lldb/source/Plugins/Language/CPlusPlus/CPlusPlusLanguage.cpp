@@ -2079,9 +2079,9 @@ public:
     m_collection_sp->Initialize(g_language_cplusplus_properties);
   }
 
-  const FormatEntity::Entry *GetFunctionNameFormat() const {
-    return GetPropertyAtIndexAs<const FormatEntity::Entry *>(
-        ePropertyFunctionNameFormat);
+  FormatEntity::Entry GetFunctionNameFormat() const {
+    return GetPropertyAtIndexAs<FormatEntity::Entry>(
+        ePropertyFunctionNameFormat, {});
   }
 };
 } // namespace
@@ -2091,7 +2091,7 @@ static PluginProperties &GetGlobalPluginProperties() {
   return g_settings;
 }
 
-const FormatEntity::Entry *CPlusPlusLanguage::GetFunctionNameFormat() const {
+FormatEntity::Entry CPlusPlusLanguage::GetFunctionNameFormat() const {
   return GetGlobalPluginProperties().GetFunctionNameFormat();
 }
 

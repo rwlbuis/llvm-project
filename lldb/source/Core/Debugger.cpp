@@ -290,19 +290,19 @@ bool Debugger::GetAutoConfirm() const {
       idx, g_debugger_properties[idx].default_uint_value != 0);
 }
 
-const FormatEntity::Entry *Debugger::GetDisassemblyFormat() const {
+FormatEntity::Entry Debugger::GetDisassemblyFormat() const {
   constexpr uint32_t idx = ePropertyDisassemblyFormat;
-  return GetPropertyAtIndexAs<const FormatEntity::Entry *>(idx);
+  return GetPropertyAtIndexAs<FormatEntity::Entry>(idx, {});
 }
 
-const FormatEntity::Entry *Debugger::GetFrameFormat() const {
+FormatEntity::Entry Debugger::GetFrameFormat() const {
   constexpr uint32_t idx = ePropertyFrameFormat;
-  return GetPropertyAtIndexAs<const FormatEntity::Entry *>(idx);
+  return GetPropertyAtIndexAs<FormatEntity::Entry>(idx, {});
 }
 
-const FormatEntity::Entry *Debugger::GetFrameFormatUnique() const {
+FormatEntity::Entry Debugger::GetFrameFormatUnique() const {
   constexpr uint32_t idx = ePropertyFrameFormatUnique;
-  return GetPropertyAtIndexAs<const FormatEntity::Entry *>(idx);
+  return GetPropertyAtIndexAs<FormatEntity::Entry>(idx, {});
 }
 
 uint64_t Debugger::GetStopDisassemblyMaxSize() const {
@@ -346,14 +346,14 @@ void Debugger::SetPrompt(llvm::StringRef p) {
   GetCommandInterpreter().UpdatePrompt(new_prompt);
 }
 
-const FormatEntity::Entry *Debugger::GetThreadFormat() const {
+FormatEntity::Entry Debugger::GetThreadFormat() const {
   constexpr uint32_t idx = ePropertyThreadFormat;
-  return GetPropertyAtIndexAs<const FormatEntity::Entry *>(idx);
+  return GetPropertyAtIndexAs<FormatEntity::Entry>(idx, {});
 }
 
-const FormatEntity::Entry *Debugger::GetThreadStopFormat() const {
+FormatEntity::Entry Debugger::GetThreadStopFormat() const {
   constexpr uint32_t idx = ePropertyThreadStopFormat;
-  return GetPropertyAtIndexAs<const FormatEntity::Entry *>(idx);
+  return GetPropertyAtIndexAs<FormatEntity::Entry>(idx, {});
 }
 
 lldb::ScriptLanguage Debugger::GetScriptLanguage() const {
@@ -480,9 +480,9 @@ bool Debugger::GetShowStatusline() const {
       idx, g_debugger_properties[idx].default_uint_value != 0);
 }
 
-const FormatEntity::Entry *Debugger::GetStatuslineFormat() const {
+FormatEntity::Entry Debugger::GetStatuslineFormat() const {
   constexpr uint32_t idx = ePropertyStatuslineFormat;
-  return GetPropertyAtIndexAs<const FormatEntity::Entry *>(idx);
+  return GetPropertyAtIndexAs<FormatEntity::Entry>(idx, {});
 }
 
 llvm::StringRef Debugger::GetSeparator() const {
@@ -1539,8 +1539,11 @@ bool Debugger::FormatDisassemblerAddress(const FormatEntity::Entry *format,
   FormatEntity::Entry format_entry;
 
   if (format == nullptr) {
-    if (exe_ctx != nullptr && exe_ctx->HasTargetScope())
-      format = exe_ctx->GetTargetRef().GetDebugger().GetDisassemblyFormat();
+    if (exe_ctx != nullptr && exe_ctx->HasTargetScope()) {
+      format_entry =
+          exe_ctx->GetTargetRef().GetDebugger().GetDisassemblyFormat();
+      format = &format_entry;
+    }
     if (format == nullptr) {
       FormatEntity::Parse("${addr}: ", format_entry);
       format = &format_entry;

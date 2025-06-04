@@ -131,8 +131,8 @@ public:
   static llvm::StringRef GetPluginNameStatic() { return "cplusplus"; }
 
   bool SymbolNameFitsToLanguage(Mangled mangled) const override;
-  
-  bool DemangledNameContainsPath(llvm::StringRef path, 
+
+  bool DemangledNameContainsPath(llvm::StringRef path,
                                  ConstString demangled) const override;
 
   ConstString
@@ -174,7 +174,7 @@ public:
 
   llvm::StringRef GetInstanceVariableName() override { return "this"; }
 
-  const FormatEntity::Entry *GetFunctionNameFormat() const override;
+  FormatEntity::Entry GetFunctionNameFormat() const override;
 
   // PluginInterface protocol
   llvm::StringRef GetPluginName() override { return GetPluginNameStatic(); }
