@@ -1284,8 +1284,9 @@ static bool DeserializeAllCompilerFlags(swift::CompilerInvocation &invocation,
     if (server.empty())
       server = fallback();
     if (server.empty()) {
-      HEALTH_LOG_PRINTF("Could not find swift-plugin-server for %s",
-                        plugin.str().c_str());
+      LOG_VERBOSE_PRINTF(GetLog(LLDBLog::Types),
+                         "Could not find swift-plugin-server for %s",
+                         plugin.str().c_str());
       return std::string();
     }
     if (!FileSystem::Instance().Exists(server)) {
