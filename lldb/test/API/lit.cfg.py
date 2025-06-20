@@ -367,3 +367,10 @@ if "FREEBSD_LEGACY_PLUGIN" in os.environ:
 # Propagate XDG_CACHE_HOME
 if "XDG_CACHE_HOME" in os.environ:
     config.environment["XDG_CACHE_HOME"] = os.environ["XDG_CACHE_HOME"]
+
+# Some steps required to initialize the tests dynamically link with python.dll
+# and need to know the location of the Python libraries. This ensures that we
+# use the same version of Python that was used to build lldb to run our tests.
+config.environment["PATH"] = os.path.pathsep.join(
+    (config.python_root_dir, config.environment.get("PATH", ""))
+)
