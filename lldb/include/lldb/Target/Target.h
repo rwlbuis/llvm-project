@@ -201,6 +201,8 @@ public:
 
   bool GetSwiftUseTasksPlugin() const;
 
+  bool GetSwiftCacheTaskPointerLocation() const;
+
   Args GetSwiftPluginServerForPath() const;
 
   bool GetSwiftAutoImportFrameworks() const;
