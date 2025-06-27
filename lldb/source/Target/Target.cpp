@@ -4529,6 +4529,18 @@ bool TargetProperties::GetSwiftUseTasksPlugin() const {
   return true;
 }
 
+bool TargetProperties::GetSwiftCacheTaskPointerLocation() const {
+  const Property *exp_property =
+      m_collection_sp->GetPropertyAtIndex(ePropertyExperimental);
+  OptionValueProperties *exp_values =
+      exp_property->GetValue()->GetAsProperties();
+  if (exp_values)
+    return exp_values
+        ->GetPropertyAtIndexAs<bool>(ePropertySwiftCacheTaskPointerLocation)
+        .value_or(true);
+  return true;
+}
+
 Args TargetProperties::GetSwiftPluginServerForPath() const {
   const uint32_t idx = ePropertySwiftPluginServerForPath;
 
