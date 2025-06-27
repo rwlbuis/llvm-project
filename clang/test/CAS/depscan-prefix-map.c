@@ -12,11 +12,11 @@
 // RUN:              -internal-iframework %S/Inputs/SDK/Library/Frameworks \
 // RUN:              -working-directory %t.d                              \
 // RUN:              -fcas-path %t.d/cas                                  \
-// RUN:              -fdepscan-prefix-map=%S=/^source                     \
-// RUN:              -fdepscan-prefix-map=%t.d=/^testdir                  \
-// RUN:              -fdepscan-prefix-map=%{objroot}=/^objroot            \
-// RUN:              -fdepscan-prefix-map=%S/Inputs/toolchain_dir=/^toolchain \
-// RUN:              -fdepscan-prefix-map=%S/Inputs/SDK=/^sdk             \
+// RUN:              -fdepscan-prefix-map %S /^source                     \
+// RUN:              -fdepscan-prefix-map %t.d /^testdir                  \
+// RUN:              -fdepscan-prefix-map %{objroot} /^objroot            \
+// RUN:              -fdepscan-prefix-map %S/Inputs/toolchain_dir /^toolchain \
+// RUN:              -fdepscan-prefix-map %S/Inputs/SDK /^sdk             \
 // RUN:              -fdepfile-entry=%t.d/extra                           \
 // RUN: | FileCheck %s -DPREFIX=%t.d
 // RUN: %clang -cc1depscan -dump-depscan-tree=%t.root -fdepscan=inline    \
@@ -27,11 +27,11 @@
 // RUN:              -internal-iframework %S/Inputs/SDK/Library/Frameworks \
 // RUN:              -working-directory %t.d                              \
 // RUN:              -fcas-path %t.d/cas                                  \
-// RUN:              -fdepscan-prefix-map=%S=/^source                     \
-// RUN:              -fdepscan-prefix-map=%t.d=/^testdir                  \
-// RUN:              -fdepscan-prefix-map=%{objroot}=/^objroot            \
-// RUN:              -fdepscan-prefix-map=%S/Inputs/toolchain_dir=/^toolchain \
-// RUN:              -fdepscan-prefix-map=%S/Inputs/SDK=/^sdk             \
+// RUN:              -fdepscan-prefix-map %S /^source                     \
+// RUN:              -fdepscan-prefix-map %t.d /^testdir                  \
+// RUN:              -fdepscan-prefix-map %{objroot} /^objroot            \
+// RUN:              -fdepscan-prefix-map %S/Inputs/toolchain_dir /^toolchain \
+// RUN:              -fdepscan-prefix-map %S/Inputs/SDK /^sdk             \
 // RUN:              -fdepfile-entry=%t.d/extra                           \
 // RUN: | FileCheck %s -DPREFIX=%t.d
 // RUN: %clang -cc1depscand -execute %{clang-daemon-dir}/%basename_t      \
@@ -45,11 +45,11 @@
 // RUN:              -internal-iframework %S/Inputs/SDK/Library/Frameworks \
 // RUN:              -working-directory %t.d                              \
 // RUN:              -fcas-path %t.d/cas                                  \
-// RUN:              -fdepscan-prefix-map=%S=/^source                     \
-// RUN:              -fdepscan-prefix-map=%t.d=/^testdir                  \
-// RUN:              -fdepscan-prefix-map=%{objroot}=/^objroot            \
-// RUN:              -fdepscan-prefix-map=%S/Inputs/toolchain_dir=/^toolchain \
-// RUN:              -fdepscan-prefix-map=%S/Inputs/SDK=/^sdk             \
+// RUN:              -fdepscan-prefix-map %S /^source                     \
+// RUN:              -fdepscan-prefix-map %t.d /^testdir                  \
+// RUN:              -fdepscan-prefix-map %{objroot} /^objroot            \
+// RUN:              -fdepscan-prefix-map %S/Inputs/toolchain_dir /^toolchain \
+// RUN:              -fdepscan-prefix-map %S/Inputs/SDK /^sdk             \
 // RUN:              -fdepfile-entry=%t.d/extra                           \
 // RUN: | FileCheck %s -DPREFIX=%t.d
 //
