@@ -1236,7 +1236,7 @@ TEST_P(SwiftDemanglingPartsTestFixture, SwiftDemanglingParts) {
       TrackingNodePrinter(swift::Demangle::DemangleOptions());
   swift::Demangle::demangleSymbolAsString(std::string(mangled), printer);
   std::string demangled = printer.takeString();
-  DemangledNameInfo nameInfo = printer.takeInfo();
+  DemangledNameInfo nameInfo = printer.getInfo();
   nameInfo.PrefixRange.second =
       std::min(info.BasenameRange.first, info.ArgumentsRange.first);
   nameInfo.SuffixRange.first =

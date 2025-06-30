@@ -27,7 +27,7 @@ class TrackingNodePrinter : public NodePrinter {
 public:
   TrackingNodePrinter(DemangleOptions options) : NodePrinter(options) {}
 
-  lldb_private::DemangledNameInfo takeInfo() { return std::move(info); }
+  lldb_private::DemangledNameInfo getInfo() { return info; }
 
 private:
   lldb_private::DemangledNameInfo info;
@@ -59,6 +59,7 @@ private:
   }
 
   bool shouldTrackNameRange(NodePointer Node) const {
+    assert(Node);
     switch (Node->getKind()) {
     case Node::Kind::Function:
     case Node::Kind::Constructor:
