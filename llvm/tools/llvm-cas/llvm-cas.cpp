@@ -693,7 +693,7 @@ static int checkLockFiles(StringRef CASPath) {
   ExitOnError ExitOnErr("llvm-cas: check-lock-files: ");
 
   SmallString<128> DataPoolPath(CASPath);
-  sys::path::append(DataPoolPath, "v1.1/v8.data");
+  sys::path::append(DataPoolPath, "v1.1/v9.data");
 
   auto OpenCASAndGetDataPoolSize = [&]() -> Expected<uint64_t> {
     auto Result = createOnDiskUnifiedCASDatabases(CASPath);
