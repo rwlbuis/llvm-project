@@ -94,28 +94,3 @@ public struct Nested<T> {
   }
 }
 
-
-public protocol P {
-    associatedtype Element
-    func getElement() -> Element
-    func protocolFunc() -> String
-    static func staticProtocolFunc() -> String
-}
-
-public protocol P2 {
-    func protocolFunc2() -> String
-}
-
-
-public struct PHolder<T> where T: P, T.Element: P, T.Element.Element: P2 {
-    let t: T
-
-    public init(t: T) {
-      self.t = t
-    }
-
-    public func foo() {
-        print(self) // break here for constrained protocol
-    }
-}
-

@@ -1179,7 +1179,7 @@ AddArchetypeTypeAliases(std::unique_ptr<SwiftASTManipulator> &code_manipulator,
   llvm::SmallDenseMap<llvm::StringRef, MetadataPointerInfo>
       visible_metadata_pointers;
   for (auto &variable : code_manipulator->GetVariableInfo()) {
-    if (!variable.IsMetadataPointer() && !variable.IsWitnessTable())
+    if (!variable.IsMetadataPointer())
       continue;
 
     llvm::StringRef type_name;

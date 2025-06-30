@@ -879,8 +879,8 @@ swift::FuncDecl *SwiftASTManipulator::GetFunctionToInjectVariableInto(
   // pointers in the wrapper, so we can pass them as opaque pointers in the
   // trampoline function later on.
   if (!ShouldBindGenericTypes(m_bind_generic_types) &&
-      (variable.IsMetadataPointer() || variable.IsWitnessTable() ||
-       variable.IsPackCount() || variable.IsUnboundPack()))
+      (variable.IsMetadataPointer() || variable.IsPackCount() ||
+       variable.IsUnboundPack()))
     return m_entrypoint_decl;
 
   return m_function_decl;

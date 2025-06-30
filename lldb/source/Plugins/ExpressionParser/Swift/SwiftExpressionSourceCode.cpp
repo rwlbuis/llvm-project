@@ -18,8 +18,6 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/StreamString.h"
 
-#include "swift/AST/ASTContext.h"
-#include "swift/AST/ASTMangler.h"
 #include "swift/Basic/LangOptions.h"
 #include "swift/Demangling/Demangle.h"
 #include "swift/Demangling/Demangler.h"
@@ -32,11 +30,8 @@ using namespace lldb_private;
 
 namespace lldb_private {
 std::optional<std::pair<unsigned, unsigned>>
-ParseSwiftGenericParameter(llvm::StringRef name, bool expect_dollar_prefix) {
-  if (expect_dollar_prefix && !name.consume_front("$"))
-    return {};
-
-  if (!name.consume_front("τ_"))
+ParseSwiftGenericParameter(llvm::StringRef name) {
+  if (!name.consume_front("$τ_"))
     return {};
 
   auto pair = name.split('_');
@@ -170,127 +165,6 @@ static llvm::Expected<llvm::SmallVector<MetadataInfo>> CollectMetadataInfos(
   }
   return metadata_info;
 }
-
-/// Returns a map from the index and depth to the archetype name, for example,
-/// given: struct S<T, U> {} This function returns {{0, 0} -> T, {0, 1} -> U}.
-static llvm::DenseMap<std::pair<unsigned, unsigned>, llvm::StringRef>
-MakeIndexAndDepthToArchetypeMap(
-    llvm::ArrayRef<swift::Requirement> requirements) {
-  llvm::DenseMap<std::pair<unsigned, unsigned>, llvm::StringRef> map;
-  for (auto &req : requirements) {
-    if (req.getKind() != swift::RequirementKind::Conformance)
-      continue;
-    auto type = req.getFirstType();
-    auto *generic_type =
-        llvm::dyn_cast<swift::GenericTypeParamType>(type.getPointer());
-    if (!generic_type)
-      continue;
-
-    unsigned depth = generic_type->getDepth();
-    unsigned index = generic_type->getIndex();
-    auto name = generic_type->getName().str();
-    map.insert({{depth, index}, name});
-  }
-  return map;
-}
-
-struct ParsedWitnessTable {
-  /// The full name of the variable in debug info. For example:
-  /// $WTτ_0_0$SubType$$MangledProtocol.
-  llvm::StringRef full_name;
-  /// The archetype name, for example T.SubType
-  std::string archetype_name;
-  /// The mangled protocol name.
-  llvm::StringRef mangled_protocol_name;
-  /// The "display" protocol name.
-  std::string protocol_name;
-  ParsedWitnessTable(llvm::StringRef full_name, std::string archetype_name,
-                     llvm::StringRef mangled_protocol_name,
-                     std::string protocol_name)
-      : full_name(full_name), archetype_name(archetype_name),
-        mangled_protocol_name(mangled_protocol_name),
-        protocol_name(protocol_name) {}
-};
-
-/// Parses the witness table artificial variables.
-static llvm::Expected<llvm::SmallVector<ParsedWitnessTable>> ParseWitnessInfos(
-    llvm::ArrayRef<SwiftASTManipulator::VariableInfo> local_variables,
-    llvm::ArrayRef<swift::Requirement> requirements) {
-  llvm::SmallVector<ParsedWitnessTable> witness_tables;
-  auto indexes_to_archetype = MakeIndexAndDepthToArchetypeMap(requirements);
-  for (auto &local_variable : local_variables) {
-    if (!local_variable.IsWitnessTable())
-      continue;
-
-    // Full name looks something like "$WTτ_0_0$SubType$$MangledProtocol.".
-    auto full_name = local_variable.GetName().str();
-    auto [metadata_name, mangled_protocol_name] = full_name.split("$$");
-
-    if (metadata_name.empty() || mangled_protocol_name.empty() ||
-        !SwiftLanguageRuntime::IsSwiftMangledName(mangled_protocol_name))
-      return llvm::createStringError(
-          "malformed witness table name in debug info");
-
-    metadata_name = metadata_name.drop_front(StringRef("$WT").size());
-    auto [front, back] = metadata_name.split('$');
-    auto maybe_depth_and_index =
-        ParseSwiftGenericParameter(front, /*expect_dollar_prefix*/ false);
-    if (!maybe_depth_and_index)
-      return llvm::createStringError(
-          "malformed witness table name in debug info");
-
-    auto [depth, index] = *maybe_depth_and_index;
-
-    auto it = indexes_to_archetype.find({depth, index});
-    if (it == indexes_to_archetype.end())
-      return llvm::createStringError(
-          "malformed witness table name in debug info");
-
-    std::string archetype_name = it->getSecond().str();
-    if (!back.empty())
-      archetype_name += "." + back.str();
-    std::replace(archetype_name.begin(), archetype_name.end(), '$', '.');
-    auto protocol_name =
-        swift::Demangle::demangleSymbolAsString(mangled_protocol_name);
-    witness_tables.emplace_back(full_name, archetype_name,
-                                mangled_protocol_name, protocol_name);
-  }
-
-  // Order the witness tables according to the requirements, otherwise we risk
-  // passing the witness table pointers in the wrong order when generating the
-  // expression.
-  llvm::SmallVector<ParsedWitnessTable> ordered_witness_tables;
-  for (auto &Requirement : requirements) {
-    if (Requirement.getKind() != swift::RequirementKind::Conformance)
-      continue;
-    swift::ProtocolDecl *ProtocolDecl = Requirement.getProtocolDecl();
-    auto protocol_type = ProtocolDecl->getDeclaredType();
-    auto type = Requirement.getFirstType();
-    auto &ast_ctx = type->getASTContext();
-    swift::Mangle::ASTMangler mangler(ast_ctx, true);
-    std::string mangled_protocol_name =
-        mangler.mangleTypeForDebugger(protocol_type, nullptr);
-    std::string name;
-    if (auto *generic_type =
-            llvm::dyn_cast<swift::GenericTypeParamType>(type.getPointer()))
-      name = generic_type->getName().str();
-    else if (auto *dependent =
-                 llvm::dyn_cast<swift::DependentMemberType>(type.getPointer()))
-      name = dependent->getString();
-
-    for (auto &parsed_witness_table : witness_tables) {
-      if (name == parsed_witness_table.archetype_name &&
-          mangled_protocol_name == parsed_witness_table.mangled_protocol_name) {
-        ordered_witness_tables.emplace_back(std::move(parsed_witness_table));
-      }
-    }
-  }
-  assert(ordered_witness_tables.size() == witness_tables.size() &&
-         "Ordered witness table size does not match");
-
-  return ordered_witness_tables;
-}
-
 /// Constructs the signatures for the expression evaluation functions based on
 /// the metadata variables in scope and any variadic functiontion parameters.
 /// For every outermost metadata pointer in scope ($τ_0_0, $τ_0_1, etc), we want
@@ -334,27 +208,10 @@ static llvm::Expected<CallsAndArgs> MakeGenericSignaturesAndCalls(
     return llvm::createStringError(llvm::errc::not_supported,
                                    "Inconsistent generic signature");
 
-  auto self = llvm::find_if(
-      local_variables, [](const SwiftASTManipulator::VariableInfo &variable) {
-        return variable.IsSelf();
-      });
-  llvm::SmallVector<ParsedWitnessTable> witness_infos;
-  if (self && self->GetUnboundType()) {
-    auto bound_generic = llvm::cast<swift::NominalOrBoundGenericNominalType>(
-        self->GetUnboundType().getPointer());
-    auto decl = bound_generic->getDecl();
-    auto requirements = decl->getGenericRequirements();
-    auto witness_infos_or_err = ParseWitnessInfos(local_variables, requirements);
-    if (!witness_infos_or_err)
-      return witness_infos_or_err.takeError();
-    witness_infos = *witness_infos_or_err;
-  }
-
-  auto metatada_infos_or_err =
-      CollectMetadataInfos(metadata_variables, generic_sig);
-  if (!metatada_infos_or_err)
-    return metatada_infos_or_err.takeError();
-  auto metadata_infos = *metatada_infos_or_err;
+  auto maybe_metadata_infos = CollectMetadataInfos(metadata_variables, generic_sig);
+  if (!maybe_metadata_infos)
+    return maybe_metadata_infos.takeError();
+  auto metadata_infos = *maybe_metadata_infos;
 
   llvm::SmallDenseMap<std::pair<unsigned, unsigned>, llvm::SmallString<4>> subs;
   std::string generic_params;
@@ -373,17 +230,11 @@ static llvm::Expected<CallsAndArgs> MakeGenericSignaturesAndCalls(
     s_generic_params << sig_archetype_name << ",";
     subs.insert({{depth, index}, sig_archetype_name});
   }
-  std::string type_constraints;
-  llvm::raw_string_ostream s_type_constraints(type_constraints);
-  for (auto &wi : witness_infos)
-    s_type_constraints << wi.archetype_name << ": " << wi.protocol_name << ",";
 
   if (!generic_params.empty())
     generic_params.pop_back();
   if (!generic_params_no_packs.empty())
     generic_params_no_packs.pop_back();
-  if (!type_constraints.empty())
-    type_constraints.pop_back();
 
   std::string user_expr; 
   llvm::raw_string_ostream user_expr_stream(user_expr);
@@ -399,8 +250,6 @@ static llvm::Expected<CallsAndArgs> MakeGenericSignaturesAndCalls(
                        << *pack_type;
     }
   user_expr_stream << ")";
-  if (!type_constraints.empty())
-    user_expr_stream << "where " << type_constraints;
 
   std::string trampoline;
   llvm::raw_string_ostream trampoline_stream(trampoline);
@@ -410,8 +259,6 @@ static llvm::Expected<CallsAndArgs> MakeGenericSignaturesAndCalls(
   if (needs_object_ptr)
     trampoline_stream << ", _ $__lldb_injected_self: inout $__lldb_context";
   trampoline_stream << ")";
-  if (!type_constraints.empty())
-    trampoline_stream << "where " << type_constraints;
 
   std::string sink;
   std::string call;
@@ -444,12 +291,6 @@ static llvm::Expected<CallsAndArgs> MakeGenericSignaturesAndCalls(
     sink_stream << ", _: $__lldb_builtin_ptr_t";
     call_stream << ", " << var->GetName().str();
   }
-
-  for (auto &wi : witness_infos) {
-    sink_stream << ", _: $__lldb_builtin_ptr_t";
-    call_stream << ", " << wi.full_name;
-  }
-
   sink_stream << ")";
   call_stream << ")";
 
