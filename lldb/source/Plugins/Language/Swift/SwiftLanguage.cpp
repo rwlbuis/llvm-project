@@ -2094,7 +2094,7 @@ public:
   }
 
   FormatEntity::Entry GetFunctionNameFormat() const {
-    return GetPropertyAtIndexAs<const FormatEntity::Entry>(
+    return GetPropertyAtIndexAs<FormatEntity::Entry>(
         ePropertyFunctionNameFormat, {});
   }
 };
