@@ -2689,16 +2689,14 @@ static lldb::ModuleSP GetUnitTestModule(lldb_private::ModuleList &modules) {
   return ModuleSP();
 }
 
-lldb::TypeSystemSP
-SwiftASTContext::CreateInstance(const SymbolContext &sc,
-                                TypeSystemSwiftTypeRef &typeref_typesystem,
-                                const char *extra_options) {
-  bool is_repl = extra_options;
+lldb::TypeSystemSP SwiftASTContext::CreateInstance(
+    const SymbolContext &sc, TypeSystemSwiftTypeRef &typeref_typesystem,
+    bool repl, bool playground, const char *extra_options) {
   bool for_expressions =
       llvm::isa<TypeSystemSwiftTypeRefForExpressions>(&typeref_typesystem);
   // REPL requires an expression type system.
-  assert(!is_repl || for_expressions);
-  if (is_repl && !for_expressions)
+  assert(!repl || for_expressions);
+  if (repl && !for_expressions)
     return {};
 
   if (!ModuleList::GetGlobalModuleListProperties()
@@ -2707,6 +2705,7 @@ SwiftASTContext::CreateInstance(const SymbolContext &sc,
 
   CompileUnit *cu = sc.comp_unit;
   const char *key = TypeSystemSwiftTypeRef::DeriveKeyFor(sc);
+  bool swift_context = cu && cu->GetLanguage() == eLanguageTypeSwift;
   std::string m_description;
   {
     StreamString ss;
@@ -2714,18 +2713,15 @@ SwiftASTContext::CreateInstance(const SymbolContext &sc,
     if (for_expressions)
       ss << "ForExpressions";
     ss << "(module: " << '"' << key << "\", " << "cu: " << '"';
-    if (cu)
+    if (cu && swift_context)
       ss << cu->GetPrimaryFile().GetFilename();
     else
-      ss << "null";
+      ss << "*";
     ss << '"' << ')';
     m_description = ss.GetString();
   }
 
   LLDB_SCOPED_TIMERF("%s::CreateInstance", m_description.c_str());
-
-  if (is_repl)
-    LOG_PRINTF(GetLog(LLDBLog::Types), "REPL detected");
 
   // This function can either create an expression/scratch/repl context,
   // or a SwiftAST fallback context for a TypeSystemSwiftTyperef.
@@ -2770,8 +2766,9 @@ SwiftASTContext::CreateInstance(const SymbolContext &sc,
     if (ShouldEnableEmbeddedSwift(cu))
       lang_opts.enableFeature(swift::Feature::Embedded);
   }
-  auto defer_log = llvm::make_scope_exit(
-      [swift_ast_sp, is_repl] { swift_ast_sp->LogConfiguration(is_repl); });
+  auto defer_log = llvm::make_scope_exit([swift_ast_sp, repl, playground] {
+    swift_ast_sp->LogConfiguration(repl, playground);
+  });
 
   LOG_PRINTF(GetLog(LLDBLog::Types), "(Target)");
   auto logError = [&](const char *message) {
@@ -2797,7 +2794,12 @@ SwiftASTContext::CreateInstance(const SymbolContext &sc,
   ModuleList module_module;
   if (!target_sp)
     module_module.Append(module_sp);
-  ModuleList &modules = target_sp ? target_sp->GetImages() : module_module;
+  // Leave modules empty if not in a Swift context to avoid a fragile
+  // and expensive scan through all images. Unless this is a Playground, which
+  // has a non-Swift executable, and user code in a framework.
+  ModuleList &modules = (target_sp && (swift_context || playground))
+                            ? target_sp->GetImages()
+                            : module_module;
   const size_t num_images = modules.GetSize();
 
   // Set the SDK path prior to doing search paths.  Otherwise when we
@@ -2869,7 +2871,7 @@ SwiftASTContext::CreateInstance(const SymbolContext &sc,
 
     ArchSpec preferred_arch;
     llvm::Triple preferred_triple;
-    if (is_repl) {
+    if (repl) {
       LOG_PRINTF(GetLog(LLDBLog::Types), "REPL: prefer target triple.");
       preferred_arch = target_arch;
       preferred_triple = target_triple;
@@ -3133,7 +3135,8 @@ SwiftASTContext::CreateInstance(const SymbolContext &sc,
           }
         }
       };
-  scan_module(module_sp, 0);
+  if (swift_context || playground)
+    scan_module(module_sp, 0);
   for (size_t mi = 0; mi != num_images; ++mi) {
     auto image_sp = modules.GetModuleAtIndex(mi);
     if (!visited_modules.count(image_sp.get()))
@@ -5461,7 +5464,7 @@ void SwiftASTContext::ClearModuleDependentCaches() {
   m_negative_type_cache.Clear();
 }
 
-void SwiftASTContext::LogConfiguration(bool is_repl) {
+void SwiftASTContext::LogConfiguration(bool repl, bool playground) {
   // It makes no sense to call VALID_OR_RETURN here. We specifically
   // want the logs in the error case!
   HEALTH_LOG_PRINTF("(SwiftASTContext*)%p:", static_cast<void *>(this));
@@ -5471,8 +5474,10 @@ void SwiftASTContext::LogConfiguration(bool is_repl) {
     HEALTH_LOG_PRINTF("  (no AST context)");
     return;
   }
-  if (is_repl)
+  if (repl)
     HEALTH_LOG_PRINTF("  REPL                             : true");
+  if (playground)
+    HEALTH_LOG_PRINTF("  Playground                       : true");
   HEALTH_LOG_PRINTF("  Swift/C++ interop                : %s",
                     ast_context->LangOpts.EnableCXXInterop ? "on" : "off");
   HEALTH_LOG_PRINTF("  Swift/Objective-C interop        : %s",
