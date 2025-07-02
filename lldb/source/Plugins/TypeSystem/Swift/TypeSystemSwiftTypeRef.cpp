@@ -1963,7 +1963,8 @@ TypeSystemSwiftTypeRef::TypeSystemSwiftTypeRef(Module &module) {
 }
 
 TypeSystemSwiftTypeRefForExpressions::TypeSystemSwiftTypeRefForExpressions(
-    lldb::LanguageType language, Target &target, const char *extra_options)
+    lldb::LanguageType language, Target &target, bool repl, bool playground,
+    const char *extra_options)
     : m_target_wp(target.shared_from_this()),
       m_persistent_state_up(new SwiftPersistentExpressionState) {
   m_description = "TypeSystemSwiftTypeRefForExpressions";
@@ -1971,7 +1972,8 @@ TypeSystemSwiftTypeRefForExpressions::TypeSystemSwiftTypeRefForExpressions(
             "%s::TypeSystemSwiftTypeRefForExpressions()",
             m_description.c_str());
   // Is this a REPL or Playground?
-  if (extra_options) {
+  assert(!repl && !playground && !extra_options && "use SetCompilerOptions()");
+  if (repl || playground || extra_options) {
     SymbolContext global_sc(target.shared_from_this(),
                             target.GetExecutableModule());
     const char *key = DeriveKeyFor(global_sc);
@@ -1979,8 +1981,8 @@ TypeSystemSwiftTypeRefForExpressions::TypeSystemSwiftTypeRefForExpressions(
         {key,
          {SwiftASTContext::CreateInstance(
               global_sc,
-              *const_cast<TypeSystemSwiftTypeRefForExpressions *>(this),
-              extra_options),
+              *const_cast<TypeSystemSwiftTypeRefForExpressions *>(this), repl,
+              playground, extra_options),
           0}});
   }
 }
@@ -2183,8 +2185,8 @@ SwiftASTContextSP TypeSystemSwiftTypeRefForExpressions::GetSwiftASTContext(
 
     // Create a new SwiftASTContextForExpressions.
     ts = SwiftASTContext::CreateInstance(
-        sc, *const_cast<TypeSystemSwiftTypeRefForExpressions *>(this),
-        m_compiler_options);
+        sc, *const_cast<TypeSystemSwiftTypeRefForExpressions *>(this), m_repl,
+        m_playground, m_compiler_options);
     m_swift_ast_context_map.insert({key, {ts, retry_count}});
   }
 
