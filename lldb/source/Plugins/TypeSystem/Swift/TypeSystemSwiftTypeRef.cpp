@@ -1963,7 +1963,8 @@ TypeSystemSwiftTypeRef::TypeSystemSwiftTypeRef(Module &module) {
 }
 
 TypeSystemSwiftTypeRefForExpressions::TypeSystemSwiftTypeRefForExpressions(
-    lldb::LanguageType language, Target &target, const char *extra_options)
+    lldb::LanguageType language, Target &target, bool repl, bool playground,
+    const char *extra_options)
     : m_target_wp(target.shared_from_this()),
       m_persistent_state_up(new SwiftPersistentExpressionState) {
   m_description = "TypeSystemSwiftTypeRefForExpressions";
@@ -1971,7 +1972,8 @@ TypeSystemSwiftTypeRefForExpressions::TypeSystemSwiftTypeRefForExpressions(
             "%s::TypeSystemSwiftTypeRefForExpressions()",
             m_description.c_str());
   // Is this a REPL or Playground?
-  if (extra_options) {
+  assert(!repl && !playground && !extra_options && "use SetCompilerOptions()");
+  if (repl || playground || extra_options) {
     SymbolContext global_sc(target.shared_from_this(),
                             target.GetExecutableModule());
     const char *key = DeriveKeyFor(global_sc);
@@ -1979,8 +1981,8 @@ TypeSystemSwiftTypeRefForExpressions::TypeSystemSwiftTypeRefForExpressions(
         {key,
          {SwiftASTContext::CreateInstance(
               global_sc,
-              *const_cast<TypeSystemSwiftTypeRefForExpressions *>(this),
-              extra_options),
+              *const_cast<TypeSystemSwiftTypeRefForExpressions *>(this), repl,
+              playground, extra_options),
           0}});
   }
 }
@@ -2072,15 +2074,14 @@ ConstString TypeSystemSwiftTypeRef::GetSwiftModuleFor(const SymbolContext &sc) {
 }
 
 const char *TypeSystemSwiftTypeRef::DeriveKeyFor(const SymbolContext &sc) {
-  if (sc.function)
+  if (sc.comp_unit && sc.comp_unit->GetLanguage() == eLanguageTypeSwift)
     if (ConstString name = GetSwiftModuleFor(sc))
       return name.GetCString();
 
-  if (sc.module_sp) {
-    if (sc.module_sp->GetFileSpec())
-      return sc.module_sp->GetFileSpec().GetFilename().GetCString();
-    return sc.module_sp->GetObjectName().GetCString();
-  }
+  // Otherwise create a catch-all context per unique triple.
+  if (sc.module_sp)
+    return ConstString(sc.module_sp->GetArchitecture().GetTriple().str()).AsCString();
+
   return nullptr;
 }
 
@@ -2184,8 +2185,8 @@ SwiftASTContextSP TypeSystemSwiftTypeRefForExpressions::GetSwiftASTContext(
 
     // Create a new SwiftASTContextForExpressions.
     ts = SwiftASTContext::CreateInstance(
-        sc, *const_cast<TypeSystemSwiftTypeRefForExpressions *>(this),
-        m_compiler_options);
+        sc, *const_cast<TypeSystemSwiftTypeRefForExpressions *>(this), m_repl,
+        m_playground, m_compiler_options);
     m_swift_ast_context_map.insert({key, {ts, retry_count}});
   }
 
@@ -2562,6 +2563,9 @@ template <> bool Equivalent<CompilerType>(CompilerType l, CompilerType r) {
   ConstString lhs = l.GetMangledTypeName();
   ConstString rhs = r.GetMangledTypeName();
   if (lhs == ConstString("$sSiD") && rhs == ConstString("$sSuD"))
+    return true;
+  if (lhs.GetStringRef() == "$sSPySo0023unnamedstruct_hEEEdhdEaVGSgD" &&
+      rhs.GetStringRef() == "$ss13OpaquePointerVSgD")
     return true;
   // Ignore missing sugar.
   swift::Demangle::Demangler dem;
