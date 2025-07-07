@@ -417,7 +417,7 @@ size_t lldb_private::formatters::LibcxxUniquePtrSyntheticFrontEnd::
     return 0;
   if (name == "deleter")
     return 1;
-  if (name == "$$dereference$$")
+  if (name == "obj" || name == "object" || name == "$$dereference$$")
     return 2;
   return UINT32_MAX;
 }
