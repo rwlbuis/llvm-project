@@ -237,7 +237,8 @@ lldb_private::formatters::LibCxxVectorIteratorSyntheticFrontEndCreator(
 
 lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::
     LibcxxSharedPtrSyntheticFrontEnd(lldb::ValueObjectSP valobj_sp)
-    : SyntheticChildrenFrontEnd(*valobj_sp), m_cntrl(nullptr) {
+    : SyntheticChildrenFrontEnd(*valobj_sp), m_cntrl(nullptr),
+      m_ptr_obj(nullptr) {
   if (valobj_sp)
     Update();
 }
@@ -250,7 +251,7 @@ llvm::Expected<uint32_t> lldb_private::formatters::
 lldb::ValueObjectSP
 lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::GetChildAtIndex(
     uint32_t idx) {
-  if (!m_cntrl)
+  if (!m_cntrl || !m_ptr_obj)
     return lldb::ValueObjectSP();
 
   ValueObjectSP valobj_sp = m_backend.GetSP();
@@ -258,20 +259,17 @@ lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::GetChildAtIndex(
     return lldb::ValueObjectSP();
 
   if (idx == 0)
-    return valobj_sp->GetChildMemberWithName("__ptr_");
+    return m_ptr_obj->GetSP();
 
   if (idx == 1) {
-    if (auto ptr_sp = valobj_sp->GetChildMemberWithName("__ptr_")) {
-      Status status;
-      auto value_type_sp =
-            valobj_sp->GetCompilerType()
-              .GetTypeTemplateArgument(0).GetPointerType();
-      ValueObjectSP cast_ptr_sp = ptr_sp->Cast(value_type_sp);
-      ValueObjectSP value_sp = cast_ptr_sp->Dereference(status);
-      if (status.Success()) {
-        return value_sp;
-      }
-    }
+    Status status;
+    auto value_type_sp = valobj_sp->GetCompilerType()
+                             .GetTypeTemplateArgument(0)
+                             .GetPointerType();
+    ValueObjectSP cast_ptr_sp = m_ptr_obj->Cast(value_type_sp);
+    ValueObjectSP value_sp = cast_ptr_sp->Dereference(status);
+    if (status.Success())
+      return value_sp;
   }
 
   return lldb::ValueObjectSP();
@@ -280,6 +278,7 @@ lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::GetChildAtIndex(
 lldb::ChildCacheState
 lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::Update() {
   m_cntrl = nullptr;
+  m_ptr_obj = nullptr;
 
   ValueObjectSP valobj_sp = m_backend.GetSP();
   if (!valobj_sp)
@@ -288,6 +287,12 @@ lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::Update() {
   TargetSP target_sp(valobj_sp->GetTargetSP());
   if (!target_sp)
     return lldb::ChildCacheState::eRefetch;
+
+  auto ptr_obj_sp = valobj_sp->GetChildMemberWithName("__ptr_");
+  if (!ptr_obj_sp)
+    return lldb::ChildCacheState::eRefetch;
+
+  m_ptr_obj = ptr_obj_sp->Clone(ConstString("pointer")).get();
 
   lldb::ValueObjectSP cntrl_sp(valobj_sp->GetChildMemberWithName("__cntrl_"));
 
@@ -303,10 +308,12 @@ bool lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::
 
 size_t lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::
     GetIndexOfChildWithName(ConstString name) {
-  if (name == "__ptr_")
+  if (name == "__ptr_" || name == "pointer")
     return 0;
-  if (name == "$$dereference$$")
+
+  if (name == "object" || name == "$$dereference$$")
     return 1;
+
   return UINT32_MAX;
 }
 
