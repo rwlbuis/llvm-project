@@ -11,6 +11,7 @@ from lldbsuite.test import lldbutil
 class TestDbgInfoContentWeakPtr(TestBase):
     @add_test_categories(["libc++"])
     @skipIf(compiler=no_match("clang"))
+    @skipUnlessDarwin
     def test(self):
         self.build()
 
@@ -23,7 +24,7 @@ class TestDbgInfoContentWeakPtr(TestBase):
         self.expect_expr(
             "w",
             result_type="std::weak_ptr<Foo>",
-            result_children=[ValueCheck(name="__ptr_")],
+            result_children=[ValueCheck(name="pointer")],
         )
         self.expect_expr("*w.lock()", result_type="Foo")
         self.expect_expr("w.lock()->a", result_type="int", result_value="3")
