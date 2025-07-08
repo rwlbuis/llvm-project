@@ -99,6 +99,10 @@ class TestCase(TestBase):
             "wie", type="std::weak_ptr<int>", summary="nullptr strong=2 weak=2"
         )
 
+        self.expect_var_path("si.pointer", type="int *")
+        self.expect_var_path("*si.pointer", type="int", value="47")
+        self.expect_var_path("si.object", type="int", value="47")
+
     @add_test_categories(["libc++"])
     def test_libcxx(self):
         self.build(dictionary={"USE_LIBCPP": 1})
