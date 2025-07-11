@@ -98,6 +98,7 @@ static bool DeprecatedDriverCommand;
 static ResourceDirRecipeKind ResourceDirRecipe;
 static bool Verbose;
 static bool PrintTiming;
+static bool EmitVisibleModules;
 static llvm::BumpPtrAllocator Alloc;
 static llvm::StringSaver Saver{Alloc};
 static std::vector<const char *> CommandLine;
@@ -247,6 +248,8 @@ static void ParseArgs(int argc, char **argv) {
   }
 
   PrintTiming = Args.hasArg(OPT_print_timing);
+
+  EmitVisibleModules = Args.hasArg(OPT_emit_visible_modules);
 
   EmitCASCompDB = Args.hasArg(OPT_emit_cas_compdb);
   InMemoryCAS = Args.hasArg(OPT_in_memory_cas);
@@ -631,6 +634,14 @@ static auto toJSONSorted(llvm::json::OStream &JOS,
   };
 }
 
+static auto toJSONSorted(llvm::json::OStream &JOS, std::vector<std::string> V) {
+  llvm::sort(V);
+  return [&JOS, V = std::move(V)] {
+    for (const StringRef Entry : V)
+      JOS.value(Entry);
+  };
+}
+
 // Thread safe.
 class FullDeps {
 public:
@@ -647,6 +658,10 @@ public:
     ID.ModuleDeps = std::move(TUDeps.ClangModuleDeps);
     ID.CASFileSystemRootID = std::move(TUDeps.CASFileSystemRootID);
     ID.IncludeTreeID = std::move(TUDeps.IncludeTreeID);
+    ID.NamedModule = std::move(TUDeps.ID.ModuleName);
+    ID.NamedModuleDeps = std::move(TUDeps.NamedModuleDeps);
+    ID.ClangModuleDeps = std::move(TUDeps.ClangModuleDeps);
+    ID.VisibleModules = std::move(TUDeps.VisibleModules);
     ID.DriverCommandLine = std::move(TUDeps.DriverCommandLine);
     ID.Commands = std::move(TUDeps.Commands);
 
@@ -786,6 +801,9 @@ public:
                     JOS.attributeArray("file-deps",
                                        toJSONStrings(JOS, I.FileDeps));
                     JOS.attribute("input-file", StringRef(I.FileName));
+                    if (EmitVisibleModules)
+                      JOS.attributeArray("visible-clang-modules",
+                                         toJSONSorted(JOS, I.VisibleModules));
                   });
                 }
               } else {
@@ -806,6 +824,9 @@ public:
                   JOS.attributeArray("file-deps",
                                      toJSONStrings(JOS, I.FileDeps));
                   JOS.attribute("input-file", StringRef(I.FileName));
+                  if (EmitVisibleModules)
+                    JOS.attributeArray("visible-clang-modules",
+                                       toJSONSorted(JOS, I.VisibleModules));
                 });
               }
             });
@@ -857,6 +878,10 @@ private:
     std::vector<ModuleID> ModuleDeps;
     std::optional<std::string> CASFileSystemRootID;
     std::optional<std::string> IncludeTreeID;
+    std::string NamedModule;
+    std::vector<std::string> NamedModuleDeps;
+    std::vector<ModuleID> ClangModuleDeps;
+    std::vector<std::string> VisibleModules;
     std::vector<std::string> DriverCommandLine;
     std::vector<Command> Commands;
   };
@@ -884,11 +909,12 @@ static bool handleTranslationUnitResult(
   return false;
 }
 
-static bool handleModuleResult(
-    StringRef ModuleName, llvm::Expected<ModuleDepsGraph> &MaybeModuleGraph,
-    FullDeps &FD, size_t InputIndex, SharedStream &OS, SharedStream &Errs) {
-  if (!MaybeModuleGraph) {
-    llvm::handleAllErrors(MaybeModuleGraph.takeError(),
+static bool handleModuleResult(StringRef ModuleName,
+                               llvm::Expected<TranslationUnitDeps> &MaybeTUDeps,
+                               FullDeps &FD, size_t InputIndex,
+                               SharedStream &OS, SharedStream &Errs) {
+  if (!MaybeTUDeps) {
+    llvm::handleAllErrors(MaybeTUDeps.takeError(),
                           [&ModuleName, &Errs](llvm::StringError &Err) {
                             Errs.applyLocked([&](raw_ostream &OS) {
                               OS << "Error while scanning dependencies for "
@@ -898,7 +924,7 @@ static bool handleModuleResult(
                           });
     return true;
   }
-  FD.mergeDeps(std::move(*MaybeModuleGraph), InputIndex);
+  FD.mergeDeps(std::move(MaybeTUDeps->ModuleGraph), InputIndex);
   return false;
 }
 
