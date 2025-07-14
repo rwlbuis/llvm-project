@@ -1438,7 +1438,7 @@ llvm::Expected<std::string> SwiftLanguageRuntime::GetEnumCaseName(
 
   auto *eti = llvm::cast<EnumTypeInfo>(ti);
   auto buffer_holder = PushLocalBuffer((int64_t)data.GetDataStart(), data.GetByteSize());
-  RemoteAddress addr(data.GetDataStart());
+  RemoteAddress addr = RemoteAddress((uint64_t)data.GetDataStart(), swift::reflection::RemoteAddress::DefaultAddressSpace);
   int case_index;
   if (eti->projectEnumValue(*GetMemoryReader(), addr, &case_index))
     return eti->getCases()[case_index].Name;
@@ -1551,7 +1551,7 @@ SwiftLanguageRuntime::ProjectEnum(ValueObject &valobj) {
     }
   }
 
-  swift::reflection::RemoteAddress remote_addr(addr);
+  auto remote_addr = swift::reflection::RemoteAddress(addr, 0);
   int case_index;
   auto *eti = llvm::cast<swift::reflection::EnumTypeInfo>(ti);
   if (!eti->projectEnumValue(*GetMemoryReader(), remote_addr, &case_index))
@@ -2034,10 +2034,11 @@ CompilerType SwiftLanguageRuntime::GetDynamicTypeAndAddress_EmbeddedClass(
   if (!pointer)
     return {};
   llvm::StringRef symbol_name;
-  if (pointer->isResolved()) {
+  if (pointer->getSymbol().empty() || pointer->getOffset()) {
     // Find the symbol name at this address.
     Address address;
-    address.SetLoadAddress(pointer->getOffset(), &GetProcess().GetTarget());
+    address.SetLoadAddress(pointer->getResolvedAddress().getRawAddress(),
+                           &GetProcess().GetTarget());
     Symbol *symbol = address.CalculateSymbolContextSymbol();
     if (!symbol)
       return {};
@@ -2291,7 +2292,8 @@ bool SwiftLanguageRuntime::GetDynamicTypeAndAddress_Existential(
           existential_address,
           llvm::expectedToOptional(in_value.GetByteSize()).value_or(0));
 
-    swift::remote::RemoteAddress remote_existential(existential_address);
+    auto remote_existential = swift::remote::RemoteAddress(
+        existential_address, swift::remote::RemoteAddress::DefaultAddressSpace);
 
     ThreadSafeReflectionContext reflection_ctx = GetReflectionContext();
     if (!reflection_ctx)
@@ -2316,7 +2318,7 @@ bool SwiftLanguageRuntime::GetDynamicTypeAndAddress_Existential(
       }
 
       const swift::reflection::TypeRef *typeref;
-      swift::remote::RemoteAddress out_address(nullptr);
+      swift::remote::RemoteAddress out_address;
       std::tie(typeref, out_address) = *pair;
 
       auto ts = tss->GetTypeSystemSwiftTypeRef();
@@ -2325,7 +2327,7 @@ bool SwiftLanguageRuntime::GetDynamicTypeAndAddress_Existential(
       swift::Demangle::Demangler dem;
       swift::Demangle::NodePointer node = typeref->getDemangling(dem);
       dynamic_type = ts->RemangleAsType(dem, node, flavor);
-      dynamic_address = out_address.getAddressData();
+      dynamic_address = out_address.getRawAddress();
     } else {
       // In the embedded Swift case, the existential container just points to
       // the instance.
@@ -2338,8 +2340,9 @@ bool SwiftLanguageRuntime::GetDynamicTypeAndAddress_Existential(
         return false;
 
       uint64_t address = 0;
-      if (maybe_addr_or_symbol->isResolved()) {
-        address = maybe_addr_or_symbol->getOffset();
+      if (maybe_addr_or_symbol->getSymbol().empty() &&
+          maybe_addr_or_symbol->getOffset() == 0) {
+        address = maybe_addr_or_symbol->getResolvedAddress().getRawAddress();
       } else {
         SymbolContextList sc_list;
         auto &module_list = GetProcess().GetTarget().GetImages();
@@ -2358,7 +2361,8 @@ bool SwiftLanguageRuntime::GetDynamicTypeAndAddress_Existential(
           GetDynamicTypeAndAddress_EmbeddedClass(address, existential_type);
       if (!dynamic_type)
         return false;
-      dynamic_address = maybe_addr_or_symbol->getOffset();
+      dynamic_address =
+          maybe_addr_or_symbol->getResolvedAddress().getRawAddress();
     }
     class_type_or_name.SetCompilerType(dynamic_type);
     address.SetRawAddress(dynamic_address);
@@ -2827,7 +2831,9 @@ Value::ValueType SwiftLanguageRuntime::GetValueType(
 
       // Read the value witness table and check if the data is inlined in
       // the existential container or not.
-      swift::remote::RemoteAddress remote_existential(existential_address);
+      auto remote_existential = swift::remote::RemoteAddress(
+          existential_address,
+          swift::remote::RemoteAddress::DefaultAddressSpace);
       if (ThreadSafeReflectionContext reflection_ctx = GetReflectionContext()) {
         std::optional<bool> is_inlined =
             reflection_ctx->IsValueInlinedInExistentialContainer(
