@@ -43,7 +43,9 @@ public:
   static bool ComputeSwiftResourceDirectory(FileSpec &lldb_shlib_spec,
                                             FileSpec &file_spec, bool verify);
 #endif
-  
+
+  static llvm::Expected<llvm::StringRef> GetSDKRoot(SDKOptions options);
+
 protected:
   static bool ComputeSupportExeDirectory(FileSpec &file_spec);
   static bool ComputeHeaderDirectory(FileSpec &file_spec);
