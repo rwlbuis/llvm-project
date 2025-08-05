@@ -1869,6 +1869,7 @@ uint32_t TypeSystemSwiftTypeRef::CollectTypeInfo(
       swift_flags |= eTypeHasValue;
       break;
 
+    case Node::Kind::ConstrainedExistential:
     case Node::Kind::BoundGenericProtocol:
     case Node::Kind::Protocol:
       swift_flags |= eTypeHasChildren | eTypeIsStructUnion | eTypeIsProtocol;
@@ -3178,6 +3179,7 @@ bool TypeSystemSwiftTypeRef::IsPossibleDynamicType(opaque_compiler_type_t type,
       switch (node->getKind()) {
       case Node::Kind::Class:
       case Node::Kind::BoundGenericClass:
+      case Node::Kind::ConstrainedExistential:
       case Node::Kind::Protocol:
       case Node::Kind::ProtocolList:
       case Node::Kind::ProtocolListWithClass:
@@ -3188,6 +3190,7 @@ bool TypeSystemSwiftTypeRef::IsPossibleDynamicType(opaque_compiler_type_t type,
       case Node::Kind::Enum:
       case Node::Kind::BoundGenericEnum:
         return true;
+
       case Node::Kind::BoundGenericStructure: {
         if (node->getNumChildren() < 2)
           return false;
@@ -5031,6 +5034,7 @@ bool TypeSystemSwiftTypeRef::DumpTypeValue(
             is_base_class);
       return false;
     }
+    case Node::Kind::ConstrainedExistential:
     case Node::Kind::ProtocolList:
       return false;
     default:
