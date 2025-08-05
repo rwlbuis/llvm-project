@@ -2391,7 +2391,7 @@ bool SwiftLanguageRuntime::GetDynamicTypeAndAddress_Existential(
 bool SwiftLanguageRuntime::GetDynamicTypeAndAddress_ExistentialMetatype(
     ValueObject &in_value, CompilerType meta_type,
     lldb::DynamicValueType use_dynamic, TypeAndOrName &class_type_or_name,
-    Address &address) {
+    Address &address, Value::ValueType &value_type) {
   // Resolve the dynamic type of the metatype.
   AddressType address_type;
   lldb::addr_t ptr = in_value.GetPointerValue(&address_type);
@@ -2437,6 +2437,7 @@ bool SwiftLanguageRuntime::GetDynamicTypeAndAddress_ExistentialMetatype(
       tss->GetTypeSystemSwiftTypeRef()->RemangleAsType(dem, wrapped, flavor);
   class_type_or_name.SetCompilerType(meta_type);
   address.SetRawAddress(ptr);
+  value_type = Value::ValueType::LoadAddress;
   return true;
 }
 
@@ -3114,10 +3115,10 @@ bool SwiftLanguageRuntime::GetDynamicTypeAndAddress(
     success = GetDynamicTypeAndAddress_Class(in_value, val_type, use_dynamic,
                                              class_type_or_name, address,
                                              static_value_type, local_buffer);
-  else if (type_info.AllSet(eTypeIsMetatype | eTypeIsProtocol))
+  else if (type_info.AllSet(eTypeIsMetatype | eTypeIsProtocol)) {
     success = GetDynamicTypeAndAddress_ExistentialMetatype(
-        in_value, val_type, use_dynamic, class_type_or_name, address);
-  else if (type_info.AnySet(eTypeIsProtocol)) {
+        in_value, val_type, use_dynamic, class_type_or_name, address, static_value_type);
+  } else if (type_info.AnySet(eTypeIsProtocol)) {
     if (type_info.AnySet(eTypeIsObjC))
       success = GetDynamicTypeAndAddress_Class(in_value, val_type, use_dynamic,
                                                class_type_or_name, address,
