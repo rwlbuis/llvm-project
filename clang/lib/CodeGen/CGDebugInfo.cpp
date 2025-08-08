@@ -3119,6 +3119,9 @@ llvm::DIModule *CGDebugInfo::getOrCreateModuleRef(ASTSourceDescriptor Mod,
     std::string Remapped = remapDIPath(Path);
     StringRef Relative(Remapped);
     StringRef CompDir = TheCU->getDirectory();
+    if (CompDir.empty())
+      return Remapped;
+
     if (Relative.consume_front(CompDir))
       Relative.consume_front(llvm::sys::path::get_separator());
 
