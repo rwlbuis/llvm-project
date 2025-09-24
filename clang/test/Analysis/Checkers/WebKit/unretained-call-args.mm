@@ -6,6 +6,8 @@
 SomeObj *provide();
 void consume_obj(SomeObj*);
 
+NSString *provide_str();
+
 CFMutableArrayRef provide_cf();
 void consume_cf(CFMutableArrayRef);
 
@@ -592,6 +594,10 @@ struct Derived : Base {
   [self doWork:@"hello", RetainPtr<SomeObj> { provide() }.get(), RetainPtr<CFMutableArrayRef> { provide_cf() }.get(), OSObjectPtr { provide_dispatch() }.get()];
   [self doWork:__null];
   [self doWork:nil];
+  [provide() isEqual:provide()];
+  [provide_str() isEqualToString:@"foo"];
+  [provide_str() copyWithZone:nullptr];
+  [provide_str() mutableCopy];
 }
 
 - (SomeObj *)getSomeObj {
