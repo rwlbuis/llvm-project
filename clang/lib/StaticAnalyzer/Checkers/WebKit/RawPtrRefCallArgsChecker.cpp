@@ -180,7 +180,8 @@ public:
     if (auto *Receiver = E->getInstanceReceiver()) {
       std::optional<bool> IsUnsafe = isUnsafePtr(E->getReceiverType());
       if (IsUnsafe && *IsUnsafe && !isPtrOriginSafe(Receiver)) {
-        if (auto *InnerMsg = dyn_cast<ObjCMessageExpr>(Receiver->IgnoreParenCasts())) {
+        if (auto *InnerMsg =
+                dyn_cast<ObjCMessageExpr>(Receiver->IgnoreParenCasts())) {
           auto InnerSelector = InnerMsg->getSelector();
           auto SelName = Selector.getNameForSlot(0);
           if (InnerSelector.getNameForSlot(0).starts_with("alloc") &&
