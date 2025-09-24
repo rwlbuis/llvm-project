@@ -100,6 +100,7 @@ id CFBridgingRelease(CFTypeRef X) {
 __attribute__((objc_root_class))
 @interface NSObject
 + (instancetype) alloc;
++ (instancetype) allocWithZone:(NSZone *)zone;
 + (Class) class;
 + (Class) superclass;
 - (instancetype) init;
@@ -164,6 +165,7 @@ __attribute__((objc_root_class))
 @end
 
 @interface SomeObj : NSObject
++ (SomeObj *)sharedInstance;
 - (instancetype)_init;
 - (SomeObj *)mutableCopy;
 - (SomeObj *)copyWithValue:(int)value;

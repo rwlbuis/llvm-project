@@ -180,10 +180,11 @@ public:
     if (auto *Receiver = E->getInstanceReceiver()) {
       std::optional<bool> IsUnsafe = isUnsafePtr(E->getReceiverType());
       if (IsUnsafe && *IsUnsafe && !isPtrOriginSafe(Receiver)) {
-        if (auto *InnerMsg = dyn_cast<ObjCMessageExpr>(Receiver)) {
+        if (auto *InnerMsg = dyn_cast<ObjCMessageExpr>(Receiver->IgnoreParenCasts())) {
           auto InnerSelector = InnerMsg->getSelector();
-          if (InnerSelector.getNameForSlot(0) == "alloc" &&
-              Selector.getNameForSlot(0).starts_with("init"))
+          auto SelName = Selector.getNameForSlot(0);
+          if (InnerSelector.getNameForSlot(0).starts_with("alloc") &&
+              (SelName.starts_with("init") || SelName.starts_with("_init")))
             return;
         }
         reportBugOnReceiver(Receiver, D);
@@ -472,11 +473,6 @@ public:
 
   bool isSafePtrType(const QualType type) const final {
     return isRetainPtrOrOSPtrType(type);
-  }
-
-  bool isSafeExpr(const Expr *E) const final {
-    return ento::cocoa::isCocoaObjectRef(E->getType()) &&
-           isa<ObjCMessageExpr>(E);
   }
 
   const char *ptrKind() const final { return "unretained"; }
