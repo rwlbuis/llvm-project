@@ -132,6 +132,11 @@ __attribute__((objc_root_class))
 + (instancetype)dictionaryWithObjects:(const id [])objects forKeys:(const id <NSCopying> [])keys count:(NSUInteger)cnt;
 @end
 
+@interface NSApplication : NSObject <NSCopying>
+@end
+
+NSApplication * NSApp;
+
 @interface NSArray : NSObject <NSCopying, NSFastEnumeration>
 - (NSUInteger)count;
 - (NSEnumerator *)objectEnumerator;

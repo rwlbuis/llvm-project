@@ -264,9 +264,21 @@ void RetainTypeChecker::visitTypedef(const TypedefDecl *TD) {
   }
 }
 
+bool isNSApplicationCocoaObjectRef(const QualType QT) {
+  if (const ObjCObjectPointerType *PT = QT->getAs<ObjCObjectPointerType>()) {
+    const ObjCInterfaceDecl *ID = PT->getInterfaceDecl();
+    if (ID && ID->getIdentifier()->getName() == "NSApplication")
+      return true;
+  }
+  return false;
+}
+
 bool RetainTypeChecker::isUnretained(const QualType QT, bool ignoreARC) {
-  if (ento::cocoa::isCocoaObjectRef(QT) && (!IsARCEnabled || ignoreARC))
+  if (ento::cocoa::isCocoaObjectRef(QT) && (!IsARCEnabled || ignoreARC)) {
+    if (isNSApplicationCocoaObjectRef(QT))
+      return false;
     return true;
+  }
   if (auto *RT = dyn_cast_or_null<RecordType>(
           QT.getCanonicalType()->getPointeeType().getTypePtrOrNull()))
     return CFPointees.contains(RT);
@@ -281,8 +293,11 @@ std::optional<bool> isUnretained(const QualType T, bool IsARCEnabled) {
     }
   }
   if ((ento::cocoa::isCocoaObjectRef(T) && !IsARCEnabled) ||
-      ento::coreFoundation::isCFObjectRef(T))
+      ento::coreFoundation::isCFObjectRef(T)) {
+    if (isNSApplicationCocoaObjectRef(T))
+      return false;
     return true;
+  }
 
   // RetainPtr strips typedef for CF*Ref. Manually check for struct __CF* types.
   auto CanonicalType = T.getCanonicalType();

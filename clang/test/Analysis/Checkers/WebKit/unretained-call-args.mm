@@ -565,6 +565,7 @@ struct Derived : Base {
 - (void)doWork:(NSString *)msg, ...;
 - (void)doWorkOnSelf;
 - (SomeObj *)getSomeObj;
+- (void)callNSApp;
 @end
 
 @implementation TestObject
@@ -599,5 +600,9 @@ struct Derived : Base {
 - (NSString *)convertImage {
   RetainPtr<CGImageRef> image = [self createImage];
   return stringForImage(image.get());
+}
+
+- (void)callNSApp {
+  [NSApp foo];
 }
 @end
